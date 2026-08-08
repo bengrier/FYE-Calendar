@@ -14,6 +14,8 @@
 
   var D = window.CalDates;
   var C = window.CalData;
+  var S = window.CalStore;   /* the live calendar: seed + everything since */
+  var ICS = window.CalIcs;
 
   /* ======================================================================
      DOM helpers
@@ -77,17 +79,19 @@
     active: 0,          // index into visible(), the flyer on the stage
     t: 0,               // 0..1 progress through the current slide
     selected: {},       // filter group key -> chosen tag
+    query: "",          // free-text search, across every field a student reads
     detailId: null,
     submitOpen: false,
     submitted: false,
     reviewOpen: false,
     slideshow: false,
 
-    // submit form
+    // submit form — the draft survives closing and reopening the overlay
+    draft: null,
+    errors: {},
     customTags: [],
 
     // review queue
-    pending: C.PENDING.slice(),
     reviewSel: 0,
     approvedNew: [],
     changesOpen: false,
@@ -97,20 +101,62 @@
 
   var overlays = one("#overlays");
 
+  /* Whatever had focus before an overlay opened, so closing it puts the caret
+     back where the user left it rather than at the top of the document. */
+  var focusBeforeOverlay = null;
+
+  /* A short-lived line under the toolbar: "Copied", "3 events downloaded". */
+  var toastTimer = null;
+
+  function toast(message) {
+    var node = one("#toast");
+    if (!node) return;
+    node.textContent = message;
+    node.hidden = false;
+    syncSubRow();
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      node.hidden = true;
+      syncSubRow();
+    }, 2600);
+  }
+
   /* ======================================================================
      Derived data
      ====================================================================== */
 
-  /* The date span the calendar is showing: a Monday-to-Sunday week, or a
-     calendar month. */
+  /* Whole days apart, counted off the calendar rather than off the clock:
+     subtracting two local midnights across a daylight-saving change is an
+     hour out, which is enough to miscount the weeks in a month. */
+  function daysBetween(a, b) {
+    return Math.round((
+      Date.UTC(b.getFullYear(), b.getMonth(), b.getDate()) -
+      Date.UTC(a.getFullYear(), a.getMonth(), a.getDate())
+    ) / 86400000);
+  }
+
+  /* The month grid always runs whole Monday-to-Sunday weeks, so it reaches
+     into the months either side. Those days are drawn, and what is drawn is
+     what is in view — otherwise the grid shows events the count denies. */
+  function monthSpan(anchor) {
+    var first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+    var last = new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0);
+    var start = D.mondayOf(first);
+    var weeks = Math.ceil((daysBetween(start, last) + 1) / 7);
+    return {
+      from: start,
+      to: D.addDays(start, weeks * 7 - 1),
+      month: first.getMonth(),
+      year: first.getFullYear(),
+      weeks: weeks
+    };
+  }
+
+  /* The date span the calendar is showing: a Monday-to-Sunday week, or the
+     weeks a calendar month is drawn across. */
   function range() {
     var a = D.fromIso(state.anchor);
-    if (state.view === "month") {
-      return {
-        from: new Date(a.getFullYear(), a.getMonth(), 1),
-        to: new Date(a.getFullYear(), a.getMonth() + 1, 0)
-      };
-    }
+    if (state.view === "month") return monthSpan(a);
     var mon = D.mondayOf(a);
     return { from: mon, to: D.addDays(mon, 6) };
   }
@@ -118,7 +164,7 @@
   /* An event survives a filter group if it carries the chosen tag — or, for
      the discipline group, if it is open to all disciplines. */
   function matchesFilters(ev) {
-    var tags = C.allTags(ev);
+    var tags = S.allTags(ev);
     return C.GROUPS.every(function (g) {
       var chosen = state.selected[g.key];
       if (!chosen) return true;
@@ -127,9 +173,30 @@
     });
   }
 
+  /* Search reads everything a student sees, tags included — the submit form
+     promises organisers their own tags are searchable, so they have to be.
+     Words are ANDed, so "cookie friday" narrows rather than widens. */
+  function matchesQuery(ev) {
+    var q = state.query.trim().toLowerCase();
+    if (!q) return true;
+    var haystack = [ev.title, ev.org, ev.place, ev.blurb]
+      .concat(S.allTags(ev)).join(" ").toLowerCase();
+    return q.split(/\s+/).every(function (word) {
+      return haystack.indexOf(word) > -1;
+    });
+  }
+
+  function keep(ev) {
+    return matchesFilters(ev) && matchesQuery(ev);
+  }
+
+  function byWhen(a, b) {
+    return a.date === b.date ? a.start - b.start : (a.date < b.date ? -1 : 1);
+  }
+
   function eventsOn(iso) {
-    return C.EVENTS
-      .filter(function (e) { return e.date === iso && matchesFilters(e); })
+    return S.events()
+      .filter(function (e) { return e.date === iso && keep(e); })
       .sort(function (a, b) { return a.start - b.start; });
   }
 
@@ -138,12 +205,19 @@
     var r = range();
     var from = D.toIso(r.from);
     var to = D.toIso(r.to);
-    return C.EVENTS
-      .filter(function (e) { return e.date >= from && e.date <= to && matchesFilters(e); })
-      .sort(function (a, b) {
-        return a.date === b.date ? a.start - b.start : (a.date < b.date ? -1 : 1);
-      });
+    return S.events()
+      .filter(function (e) { return e.date >= from && e.date <= to && keep(e); })
+      .sort(byWhen);
   }
+
+  /* Matches anywhere on the calendar, not just in view — a search that finds
+     nothing this week should say how much it would find if you looked wider. */
+  function matchesEverywhere() {
+    return S.events().filter(keep).sort(byWhen);
+  }
+
+  function isToday(iso) { return iso === C.CONFIG.today; }
+  function isPast(iso) { return iso < C.CONFIG.today; }
 
   /* Null when the view is empty — the showcase then says so rather than
      putting some other week's flyer on the stage. */
@@ -153,24 +227,29 @@
     return vis[Math.min(state.active, vis.length - 1)];
   }
 
-  /* The soonest event anywhere on the calendar, for the "jump ahead" offer on
-     an empty view. Null once the last one has passed. */
+  /* The soonest event that would still answer the current filters and search,
+     for the "jump ahead" offer on an empty view. Null once the last one has
+     passed. */
   function nextUpcoming() {
-    return C.EVENTS
-      .filter(function (e) { return e.date >= C.CONFIG.today; })
-      .sort(function (a, b) {
-        return a.date === b.date ? a.start - b.start : (a.date < b.date ? -1 : 1);
-      })[0] || null;
+    return matchesEverywhere().filter(function (e) {
+      return e.date >= C.CONFIG.today;
+    })[0] || null;
   }
 
   function anyFilter() {
     return Object.keys(state.selected).length > 0;
   }
 
+  function anyNarrowing() {
+    return anyFilter() || state.query.trim().length > 0;
+  }
+
   function rangeLabel() {
     var r = range();
     var M = D.MONTHS;
-    if (state.view === "month") return M[r.from.getMonth()] + " " + r.from.getFullYear();
+    /* The month view is named for its month, not for the neighbouring Monday
+       its grid happens to start on. */
+    if (state.view === "month") return M[r.month] + " " + r.year;
     if (r.from.getMonth() === r.to.getMonth()) {
       return M[r.from.getMonth()] + " " + r.from.getDate() + " – " + r.to.getDate() + ", " + r.to.getFullYear();
     }
@@ -186,7 +265,7 @@
      cover-cropped thumbnail, and — for an event with no flyer yet — a set
      page built from the event's own text so the stage never goes blank. */
   function flyerNode(ev, mode) {
-    var flyer = ev.flyer ? C.FLYERS[ev.flyer] : null;
+    var flyer = S.flyerOf(ev);
 
     if (flyer) {
       return el("img", {
@@ -251,12 +330,113 @@
 
   function clearFilters() {
     state.selected = {};
+    state.query = "";
+    var box = one("#search");
+    if (box) box.value = "";
     state.active = 0;
     state.t = 0;
     render();
   }
 
+  function setQuery(value) {
+    state.query = value;
+    state.active = 0;
+    state.t = 0;
+    render();
+  }
+
+  function goToDate(iso) {
+    state.anchor = iso;
+    state.active = 0;
+    state.t = 0;
+    render();
+  }
+
+  /* ======================================================================
+     Routing
+
+     Four things belong in the URL: an event, and the three overlays. An event
+     link is the one a student sends a friend, and putting the overlays there
+     too means the browser's Back button closes them, which on a phone is the
+     gesture people actually reach for.
+
+     The hash is written by the state, never read back into it except through
+     `applyRoute`, so there is exactly one direction of flow.
+     ====================================================================== */
+
+  var applyingRoute = false;
+
+  function hashForState() {
+    if (state.detailId) return "#event/" + encodeURIComponent(state.detailId);
+    if (state.reviewOpen) return "#review";
+    if (state.submitOpen) return "#submit";
+    if (state.slideshow) return "#slideshow";
+    return "";
+  }
+
+  function syncHash() {
+    if (applyingRoute) return;
+    var want = hashForState();
+    if ((location.hash || "") === want) return;
+
+    var url = location.pathname + location.search + want;
+    var standingOnOurs = !!(history.state && history.state.fye);
+
+    if (!want) {
+      /* Closing: rewind when we are standing on an entry we pushed, and
+         otherwise just tidy the URL — calling back() on the entry the user
+         arrived at would take them off the site entirely. */
+      if (standingOnOurs) history.back();
+      else history.replaceState(null, "", url);
+      return;
+    }
+
+    /* Opening from the calendar pushes, so Back closes. Moving between
+       overlays — stepping through events in the modal, most of all —
+       replaces: twenty flyers read in a row should not be twenty presses of
+       Back to get out of, and Escape has to close on the first press. */
+    if (standingOnOurs) history.replaceState({ fye: true }, "", url);
+    else history.pushState({ fye: true }, "", url);
+  }
+
+  function applyRoute() {
+    var raw = location.hash || "";
+    var lower = raw.toLowerCase();
+    var event = /^#event\/(.+)$/i.exec(raw);
+
+    applyingRoute = true;
+    state.detailId = null;
+    state.submitOpen = false;
+    state.reviewOpen = false;
+    state.slideshow = false;
+
+    if (event) {
+      var id = decodeURIComponent(event[1]);
+      var found = S.eventById(id);
+      if (found) {
+        state.detailId = id;
+        /* A link to an event has to land on the week that holds it. */
+        if (found.date < D.toIso(range().from) || found.date > D.toIso(range().to)) {
+          state.anchor = found.date;
+        }
+      }
+    } else if (lower === "#review") {
+      state.reviewOpen = true;
+      state.note = "";
+    } else if (lower === "#submit") {
+      state.submitOpen = true;
+    } else if (lower === "#slideshow") {
+      /* Set on arrival without asking for fullscreen — that needs a gesture,
+         and a page load is not one. */
+      state.slideshow = true;
+    }
+
+    applyingRoute = false;
+    render();
+  }
+
   function openDetail(id) {
+    if (!state.detailId) focusBeforeOverlay = document.activeElement;
     state.detailId = id;
     render();
   }
@@ -264,17 +444,53 @@
   function closeDetail() {
     state.detailId = null;
     render();
+    restoreFocus();
+  }
+
+  /* Step through the events in view from inside the detail modal. */
+  function stepDetail(dir) {
+    var vis = visible();
+    if (vis.length < 2) return;
+    var at = vis.findIndex(function (e) { return e.id === state.detailId; });
+    if (at === -1) return;
+    var next = vis[((at + dir) % vis.length + vis.length) % vis.length];
+    state.detailId = next.id;
+    state.active = vis.indexOf(next);
+    state.t = 0;
+    render();
+  }
+
+  function restoreFocus() {
+    var node = focusBeforeOverlay;
+    focusBeforeOverlay = null;
+    if (node && document.contains(node) && typeof node.focus === "function") {
+      node.focus();
+    }
   }
 
   /* ======================================================================
-     Scroll lock — any full-surface overlay freezes the page behind it
+     Overlay bookkeeping — any full-surface overlay freezes the page behind it
      ====================================================================== */
 
-  function syncScrollLock() {
-    var locked = state.submitOpen || state.reviewOpen || state.slideshow || !!state.detailId;
+  function overlayOpen() {
+    return state.submitOpen || state.reviewOpen || state.slideshow || !!state.detailId;
+  }
+
+  function syncOverlayState() {
+    var locked = overlayOpen();
     var value = locked ? "hidden" : "";
     document.body.style.overflow = value;
     document.documentElement.style.overflow = value;
+
+    /* The page behind an overlay is visible but must not be reachable: without
+       this, Tab walks straight out of the dialog into the calendar underneath
+       and a screen reader reads both at once. */
+    var app = one(".app");
+    if (app) {
+      app.inert = locked;
+      if (locked) app.setAttribute("aria-hidden", "true");
+      else app.removeAttribute("aria-hidden");
+    }
   }
 
   /* ======================================================================
@@ -298,36 +514,55 @@
   /* What the stage shows when the week or month holds nothing: why it is empty,
      and a way forward when there is still something later on the calendar. */
   function emptyStageNode() {
-    var upcoming = anyFilter() ? null : nextUpcoming();
+    var narrowed = anyNarrowing();
+    var upcoming = nextUpcoming();
+    var elsewhere = narrowed ? matchesEverywhere().length : 0;
+
+    var line = narrowed
+      ? (state.query.trim()
+          ? "Nothing here matches “" + state.query.trim() + "”."
+          : "Nothing here matches that filter.")
+      : "Nothing scheduled this " + (state.view === "month" ? "month" : "week") + ".";
 
     return el("div", { class: "stage-empty" }, [
-      el("div", {
-        class: "stage-empty__line",
-        text: anyFilter()
-          ? "Nothing here matches that filter."
-          : "Nothing scheduled this " + (state.view === "month" ? "month" : "week") + "."
-      }),
-      anyFilter()
-        ? el("button", { type: "button", class: "btn-quiet", text: "Clear the filters", onClick: clearFilters })
-        : upcoming
-          ? el("button", {
-              type: "button",
-              class: "btn-quiet",
-              text: "Next event · " + D.longDayLabel(upcoming.date),
-              onClick: function () {
-                state.anchor = upcoming.date;
-                state.active = 0;
-                state.t = 0;
-                render();
-              }
-            })
-          : null
+      el("div", { class: "stage-empty__line", text: line }),
+      /* When a narrowed view still has hits further out, say so before
+         offering to throw the search away — jumping is usually what was
+         meant. */
+      narrowed && elsewhere
+        ? el("div", {
+            class: "stage-empty__hint",
+            text: elsewhere === 1
+              ? "1 match elsewhere on the calendar."
+              : elsewhere + " matches elsewhere on the calendar."
+          })
+        : null,
+      upcoming
+        ? el("button", {
+            type: "button",
+            class: "btn-quiet",
+            text: (narrowed ? "First match · " : "Next event · ") + D.longDayLabel(upcoming.date),
+            onClick: function () { goToDate(upcoming.date); }
+          })
+        : null,
+      narrowed
+        ? el("button", {
+            type: "button", class: "btn-quiet", text: "Clear filters and search",
+            onClick: clearFilters
+          })
+        : null
     ]);
   }
 
   function paintStage(node, cur) {
-    /* A sentinel key so an empty stage is not repainted every tick either. */
-    var key = cur ? cur.id : " empty:" + state.view + ":" + anyFilter();
+    /* A sentinel key so an empty stage is not repainted every tick either. It
+       has to name everything the empty message reads — the anchor and the
+       query included, or stepping between two empty weeks leaves the previous
+       week's "Next event" date sitting on the stage. */
+    var key = cur
+      ? cur.id
+      : ["empty", state.view, state.anchor, state.query,
+         JSON.stringify(state.selected)].join("~");
     if (node.dataset.event === key) return;
     node.dataset.event = key;
     fill(node, cur ? flyerNode(cur, "stage") : emptyStageNode());
@@ -351,7 +586,9 @@
 
       return el("button", {
         type: "button",
-        class: "reel__item",
+        class: "reel__item" +
+          (isPast(ev.date) ? " is-past" : "") +
+          (isToday(ev.date) ? " is-today" : ""),
         onClick: function () { go(i); }
       }, compact ? lines : [
         el("span", { class: "reel__n", text: String(i + 1).padStart(2, "0") }),
@@ -399,9 +636,11 @@
     vis = vis || visible();
     var secs = C.CONFIG.slideSeconds;
     var left = Math.max(1, Math.ceil(secs * (1 - state.t)));
-    /* Empty views say so on the stage itself, so the line under it goes quiet. */
+    /* Empty views say so on the stage itself, so the line under it goes quiet.
+       So does a paused one — a frozen number counting nothing down reads as a
+       bug rather than as a deliberate hold. */
     var text = vis.length > 1
-      ? "Next event in " + left + "s"
+      ? (timerRunning() ? "Next event in " + left + "s" : "Paused")
       : vis.length === 1 ? "One event in this view" : "";
     all("[data-countdown]").forEach(function (node) { node.textContent = text; });
   }
@@ -411,6 +650,24 @@
      ====================================================================== */
 
   var filtersBuilt = false;
+
+  /* The custom group is the one list that grows: a tag the office approves in
+     the review queue has to be filterable straight away. */
+  function chipsFor(g) {
+    return g.key === "custom" ? S.customTags() : g.chips;
+  }
+
+  function paintOptions(select, g) {
+    var options = [{ value: "", label: g.any }].concat(
+      chipsFor(g).map(function (c) { return { value: c, label: c }; })
+    );
+    var signature = options.map(function (o) { return o.value; }).join("|");
+    if (select.dataset.options === signature) return;
+    select.dataset.options = signature;
+    fill(select, options.map(function (o) {
+      return el("option", { value: o.value, text: o.label });
+    }));
+  }
 
   function renderFilters() {
     var host = one("#filters");
@@ -422,11 +679,7 @@
           "data-group": g.key,
           "aria-label": g.any,
           onChange: function (e) { setFilter(g.key, e.target.value); }
-        }, [{ value: "", label: g.any }].concat(
-          g.chips.map(function (c) { return { value: c, label: c }; })
-        ).map(function (o) {
-          return el("option", { value: o.value, text: o.label });
-        }));
+        });
       }).concat(
         el("button", {
           type: "button",
@@ -440,12 +693,22 @@
     }
 
     all("select[data-group]", host).forEach(function (select) {
+      var g = C.GROUPS.filter(function (x) { return x.key === select.dataset.group; })[0];
+      paintOptions(select, g);
+
       var chosen = state.selected[select.dataset.group] || "";
+      /* A filter can be left pointing at a tag that no longer exists — the
+         event carrying it was declined out of the queue, say. Drop it rather
+         than filtering everything away with an option nobody can see. */
+      if (chosen && chipsFor(g).indexOf(chosen) === -1) {
+        delete state.selected[select.dataset.group];
+        chosen = "";
+      }
       if (select.value !== chosen) select.value = chosen;
       select.classList.toggle("is-on", !!chosen);
     });
 
-    one("[data-clear]", host).hidden = !anyFilter();
+    one("[data-clear]", host).hidden = !anyNarrowing();
   }
 
   /* ======================================================================
@@ -458,10 +721,38 @@
     all("[data-range]").forEach(function (node) { node.textContent = label; });
 
     one("#visible-count").textContent =
-      vis.length === 1 ? "1 event showing" : vis.length + " events showing";
+      (vis.length === 1 ? "1 event" : vis.length + " events") +
+      (anyNarrowing() ? " matching" : " showing");
 
     one('[data-action="view-week"]').classList.toggle("is-on", state.view === "week");
     one('[data-action="view-month"]').classList.toggle("is-on", state.view === "month");
+
+    /* Nothing in view is nothing to export. */
+    var download = one('[data-action="download-view"]');
+    download.disabled = vis.length === 0;
+    download.title = vis.length === 1
+      ? "Download this event as a calendar file"
+      : "Download these " + vis.length + " events as a calendar file";
+
+    /* Only offered once the visitor has actually changed something — for
+       everyone else it is a button that undoes nothing. */
+    one('[data-action="reset-store"]').hidden = !S.isDirty();
+    syncSubRow();
+  }
+
+  /* The strip under the toolbar collapses entirely when it holds nothing, so
+     an empty row never opens a gap in the rule above the calendar. */
+  function syncSubRow() {
+    var row = one("#toolbar-sub");
+    row.hidden = Array.prototype.every.call(row.children, function (node) {
+      return node.hidden;
+    });
+  }
+
+  function downloadView() {
+    var vis = visible();
+    if (!ICS.download(vis, "fye-" + rangeLabel())) return;
+    toast(vis.length === 1 ? "1 event downloaded" : vis.length + " events downloaded");
   }
 
   /* ======================================================================
@@ -471,7 +762,7 @@
   function eventCard(ev) {
     return el("button", {
       type: "button",
-      class: "eventcard",
+      class: "eventcard" + (isPast(ev.date) ? " is-past" : ""),
       onClick: function () { openDetail(ev.id); }
     }, [
       el("span", { class: "eventcard__thumb" }, flyerNode(ev, "thumb")),
@@ -481,6 +772,12 @@
         el("span", { class: "eventcard__place", text: ev.place })
       ])
     ]);
+  }
+
+  /* A day with nothing in it means two different things, and saying the wrong
+     one sends people looking for events that were only ever filtered out. */
+  function emptyDayText() {
+    return anyNarrowing() ? "No matches" : "Nothing scheduled";
   }
 
   function weekGrid() {
@@ -493,7 +790,11 @@
         var iso = D.toIso(d);
         var events = vis.filter(function (e) { return e.date === iso; });
 
-        return el("div", { class: "week__day" }, [
+        return el("div", {
+          class: "week__day" +
+            (isToday(iso) ? " is-today" : "") +
+            (isPast(iso) ? " is-past" : "")
+        }, [
           el("div", { class: "week__head" }, [
             /* The month prints on the first column and wherever a month turns over. */
             el("div", {
@@ -502,13 +803,14 @@
             }),
             el("div", { class: "week__date" }, [
               el("span", { class: "week__num", text: String(d.getDate()) }),
-              el("span", { class: "week__dow", text: label })
+              el("span", { class: "week__dow", text: label }),
+              isToday(iso) ? el("span", { class: "week__today", text: "Today" }) : null
             ])
           ]),
           el("div", { class: "week__events" },
             events.length
               ? events.map(eventCard)
-              : el("div", { class: "week__empty", text: "Nothing scheduled" })
+              : el("div", { class: "week__empty", text: emptyDayText() })
           )
         ]);
       }))
@@ -517,23 +819,26 @@
 
   function monthGrid() {
     var r = range();
-    var start = D.mondayOf(r.from);
-    var weeks = Math.ceil((((r.to - start) / 86400000) + 1) / 7);
     var cells = [];
 
-    for (var i = 0; i < weeks * 7; i++) {
-      var d = D.addDays(start, i);
+    for (var i = 0; i < r.weeks * 7; i++) {
+      var d = D.addDays(r.from, i);
       var iso = D.toIso(d);
-      var inMonth = d.getMonth() === r.from.getMonth();
+      var inMonth = d.getMonth() === r.month;
       /* A day that starts a month says so, rather than repeating a bare 1. */
       var num = d.getDate() === 1 ? D.MSHORT[d.getMonth()] + " 1" : String(d.getDate());
 
-      cells.push(el("div", { class: "month__cell" + (inMonth ? "" : " is-outside") }, [
+      cells.push(el("div", {
+        class: "month__cell" +
+          (inMonth ? "" : " is-outside") +
+          (isToday(iso) ? " is-today" : "") +
+          (isPast(iso) ? " is-past" : "")
+      }, [
         el("div", { class: "month__num", text: num }),
         el("div", { class: "month__events" }, eventsOn(iso).map(function (ev) {
           return el("button", {
             type: "button",
-            class: "monthevent",
+            class: "monthevent" + (isPast(ev.date) ? " is-past" : ""),
             onClick: function () { openDetail(ev.id); }
           }, [
             el("span", { class: "monthevent__time", text: ev.time }),
@@ -553,10 +858,18 @@
 
   var gridSignature = null;
 
+  /* Bumped whenever the store changes underneath us, so every cache keyed on
+     a signature knows to let go. */
+  var revision = 0;
+  S.onChange(function () { revision++; });
+
   function renderCalendar() {
-    /* The grid only depends on the view, the anchor and the filters — not on
-       which flyer is on the stage — so it is rebuilt only when one changes. */
-    var signature = [state.view, state.anchor, JSON.stringify(state.selected)].join("~");
+    /* The grid only depends on the view, the anchor, the filters and the
+       search — not on which flyer is on the stage — so it is rebuilt only
+       when one of those changes. `revision` covers events published out of
+       the review queue, which change the grid without changing the view. */
+    var signature = [state.view, state.anchor, state.query,
+                     JSON.stringify(state.selected), revision].join("~");
     if (signature === gridSignature) return;
     gridSignature = signature;
     fill(one("#calendar"), state.view === "month" ? monthGrid() : weekGrid());
@@ -566,8 +879,35 @@
      Event detail
      ====================================================================== */
 
+  /* The link that identifies this event anywhere — what Copy link puts on the
+     clipboard and what a shared URL resolves back to. */
+  function linkTo(ev) {
+    return location.origin === "null" || location.protocol === "file:"
+      ? location.href.split("#")[0] + "#event/" + encodeURIComponent(ev.id)
+      : location.origin + location.pathname + location.search +
+        "#event/" + encodeURIComponent(ev.id);
+  }
+
+  function copyLink(ev) {
+    var url = linkTo(ev);
+    var done = function () { toast("Link copied"); };
+    var failed = function () {
+      /* Clipboard access is refused on insecure origins and in some embedded
+         browsers; showing the URL still lets someone copy it by hand. */
+      window.prompt("Copy this link", url);
+    };
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(url).then(done, failed);
+    } else {
+      failed();
+    }
+  }
+
   function detailOverlay(ev) {
-    var flyer = ev.flyer ? C.FLYERS[ev.flyer] : null;
+    var flyer = S.flyerOf(ev);
+    var vis = visible();
+    var stepable = vis.length > 1 && vis.some(function (e) { return e.id === ev.id; });
 
     var panel = el("div", {
       class: "modal__panel",
@@ -579,26 +919,55 @@
     }, [
       el("div", { class: "modal__flyer" }, flyerNode(ev, "stage")),
       el("div", { class: "modal__info" }, [
-        el("div", { class: "kicker", text: ev.org }),
+        el("div", { class: "modal__topline" }, [
+          el("div", { class: "kicker", text: ev.org }),
+          isPast(ev.date)
+            ? el("span", { class: "badge badge--past", text: "Already happened" })
+            : isToday(ev.date)
+              ? el("span", { class: "badge badge--today", text: "Today" })
+              : null
+        ]),
         el("h2", { class: "modal__title", text: ev.title }),
         el("div", { class: "modal__rule" }),
         el("div", { class: "modal__when", text: D.longDayLabel(ev.date) + ", " + ev.time }),
         el("div", { class: "modal__place", text: ev.place }),
         el("p", { class: "modal__blurb", text: ev.blurb }),
-        el("div", { class: "chips" }, C.allTags(ev).map(function (t) {
+        el("div", { class: "chips" }, S.allTags(ev).map(function (t) {
           return el("span", { class: "chip", text: t });
         })),
         el("div", { class: "modal__actions" }, [
+          el("button", {
+            type: "button", class: "btn-primary", text: "Add to calendar",
+            onClick: function () {
+              if (ICS.download([ev], ev.title)) toast("Calendar file downloaded");
+            }
+          }),
           /* Only offered when there is a page to open. */
           flyer ? el("a", {
-            class: "link-button",
+            class: "btn-secondary btn-secondary--link",
             href: flyer.page,
             target: "_blank",
             rel: "noopener",
             text: "Open the flyer page"
           }) : null,
+          el("button", {
+            type: "button", class: "btn-secondary", text: "Copy link",
+            onClick: function () { copyLink(ev); }
+          }),
           el("button", { type: "button", class: "btn-secondary", onClick: closeDetail, text: "Close" })
-        ])
+        ]),
+        stepable
+          ? el("div", { class: "modal__step" }, [
+              el("button", {
+                type: "button", class: "btn-quiet", text: "‹ Previous",
+                onClick: function () { stepDetail(-1); }
+              }),
+              el("button", {
+                type: "button", class: "btn-quiet", text: "Next ›",
+                onClick: function () { stepDetail(1); }
+              })
+            ])
+          : null
       ])
     ]);
 
@@ -609,12 +978,94 @@
      Submit an event
      ====================================================================== */
 
+  /* The draft lives in state rather than in the DOM, so a validation pass can
+     rebuild the whole form without throwing away a word of what was typed. */
+  function blankDraft() {
+    return {
+      title: "", org: "", place: "", blurb: "",
+      date: "", startTime: "", endTime: "",
+      repeat: "", repeatUntil: "",
+      /* Open to everyone unless the submitter narrows it. A blank discipline
+         would drop the event out of every discipline filter, which is the
+         opposite of what leaving a field alone should mean. */
+      tags: { discipline: "All disciplines" },
+      by: "", email: "",
+      flyerName: "", flyerImage: null, flyerNote: ""
+    };
+  }
+
+  function draft() {
+    if (!state.draft) state.draft = blankDraft();
+    return state.draft;
+  }
+
+  /* "18:30" -> 18.5. Empty or malformed reads as null so validation, not
+     arithmetic, is what reports it. */
+  function decimalFromTimeInput(value) {
+    var m = /^(\d{1,2}):(\d{2})$/.exec(String(value || "").trim());
+    if (!m) return null;
+    var h = Number(m[1]);
+    var mins = Number(m[2]);
+    if (h > 23 || mins > 59) return null;
+    return h + mins / 60;
+  }
+
+  /* The copy asks for a CSU address and the office replies to it, so anything
+     else is a submission nobody can follow up. Subdomains count — the seeded
+     submitter is on rams.colostate.edu. */
+  function looksLikeCsuEmail(value) {
+    return /^[^\s@]+@([a-z0-9-]+\.)*colostate\.edu$/i.test(String(value || "").trim());
+  }
+
+  function validateDraft(d) {
+    var errors = {};
+
+    if (!d.title.trim()) errors.title = "Give the event a name.";
+    if (!d.org.trim()) errors.org = "Say who is hosting it.";
+    if (!d.place.trim()) errors.place = "Say where it is.";
+    if (d.blurb.trim().length < 20) {
+      errors.blurb = "A sentence or two, so a first-year knows what they are walking into.";
+    }
+
+    if (!d.date) {
+      errors.date = "Pick a date.";
+    } else if (d.date < C.CONFIG.today) {
+      errors.date = "That date has already passed.";
+    }
+
+    var start = decimalFromTimeInput(d.startTime);
+    var end = decimalFromTimeInput(d.endTime);
+    if (start === null) errors.startTime = "Pick a start time.";
+    if (end === null) errors.endTime = "Pick an end time.";
+    else if (start !== null && end <= start) errors.endTime = "The end has to come after the start.";
+
+    if (d.repeat && !d.repeatUntil) {
+      errors.repeatUntil = "Say when the series stops.";
+    } else if (d.repeat && d.repeatUntil && d.repeatUntil < d.date) {
+      errors.repeatUntil = "That is before the first date.";
+    }
+
+    if (!d.by.trim()) errors.by = "We need a name to reply to.";
+    if (!d.email.trim()) errors.email = "We need an address to reply to.";
+    else if (!looksLikeCsuEmail(d.email)) errors.email = "Use your colostate.edu address.";
+
+    return errors;
+  }
+
   /* A label wrapping its control, so the caption is the control's accessible
-     name without needing ids. */
-  function labelled(labelText, control, extraClass) {
-    return el("label", { class: "field" + (extraClass ? " " + extraClass : "") }, [
+     name without needing ids. `name` ties it to its validation message. */
+  function labelled(labelText, control, opts) {
+    opts = opts || {};
+    var message = opts.name ? state.errors[opts.name] : null;
+    if (message && control.setAttribute) control.setAttribute("aria-invalid", "true");
+
+    return el("label", {
+      class: "field" + (opts.extraClass ? " " + opts.extraClass : "") +
+        (message ? " field--error" : "")
+    }, [
       el("span", { class: "field__label", text: labelText }),
-      control
+      control,
+      message ? el("span", { class: "field__error", text: message }) : null
     ]);
   }
 
@@ -630,33 +1081,267 @@
     );
   }
 
+  /* The submit form asks a different question from the filter bar. "Any
+     discipline" is a filter that stops filtering; the submitter's equivalent
+     is a claim about the event — that it is open to everyone — and it carries
+     the tag the seeded events use for exactly that. */
+  function submitOptions(g) {
+    if (g.key !== "discipline") return groupOptions(g);
+    return [{ value: "All disciplines", label: "Open to every discipline" }].concat(
+      g.chips.map(function (c) { return { value: c, label: c }; })
+    );
+  }
+
+  /* A text control bound to one key of the draft. Writing straight into the
+     draft on every keystroke means no render is needed to keep them in step. */
+  function bound(tag, key, props) {
+    var node = el(tag, Object.assign({ class: "input" }, props || {}));
+    node.value = draft()[key];
+    node.addEventListener("input", function (e) { draft()[key] = e.target.value; });
+    return node;
+  }
+
+  /* ----------------------------------------------------------------------
+     The flyer upload
+
+     There is no server to post a file to, so an uploaded image is downscaled
+     in the browser and carried as a data URL — small enough to sit in
+     localStorage, and real enough that the reviewer sees the actual artwork
+     rather than a hatched rectangle. A PDF cannot be rendered this way, so
+     only its name travels and the office attaches the page itself.
+     ---------------------------------------------------------------------- */
+
+  var MAX_UPLOAD = 12 * 1024 * 1024;
+  var MAX_EDGE = 1400;
+
+  function readFlyer(file, done) {
+    if (!file) { done(null); return; }
+
+    if (file.size > MAX_UPLOAD) {
+      done({ error: "That file is over 12 MB. Export it smaller and try again." });
+      return;
+    }
+
+    if (file.type === "application/pdf") {
+      done({ name: file.name, image: null, note: "PDF received — the office attaches the page itself." });
+      return;
+    }
+
+    if (file.type.indexOf("image/") !== 0) {
+      done({ error: "Flyers have to be a PDF or an image." });
+      return;
+    }
+
+    var reader = new FileReader();
+    reader.onerror = function () { done({ error: "That file could not be read." }); };
+    reader.onload = function () {
+      var img = new Image();
+      img.onerror = function () { done({ error: "That image could not be opened." }); };
+      img.onload = function () {
+        var scale = Math.min(1, MAX_EDGE / Math.max(img.width, img.height));
+        var canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+        try {
+          done({
+            name: file.name,
+            image: canvas.toDataURL("image/jpeg", 0.85),
+            note: "Ready — this is what the reviewer sees."
+          });
+        } catch (e) {
+          /* A canvas tainted by a cross-origin source cannot be exported. */
+          done({ name: file.name, image: null, note: "Received — preview unavailable." });
+        }
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
   function submitDone() {
+    var sub = state.submitted;
+    var dates = S.occurrences(sub);
+
     return el("div", { class: "done" }, [
       el("div", { class: "done__kicker", text: "Received" }),
       el("h3", { class: "done__title", text: "Your event is in the review queue." }),
+
+      /* Reading the submission back is the only confirmation there is that the
+         right thing was sent — worth more here than another line of reassurance. */
+      el("div", { class: "done__recap" }, [
+        el("div", { class: "done__recaptitle", text: sub.title }),
+        el("div", { class: "done__recapline", text: sub.org + " · " + sub.place }),
+        el("div", {
+          class: "done__recapline",
+          text: D.longDayLabel(sub.date) + ", " + sub.time +
+            (dates.length > 1 ? " · " + dates.length + " dates" : "")
+        }),
+        sub.flyer
+          ? el("div", { class: "done__recapline", text: "Flyer: " + sub.flyer })
+          : el("div", { class: "done__recapline", text: "No flyer — it will list as text." })
+      ]),
+
       el("p", {
         class: "done__body",
-        text: "The Common First-Year office reviews submissions on weekdays. You'll get an email at the address you gave once it is approved, and the event appears on the calendar the moment it is."
+        text: "The Common First-Year office reviews submissions on weekdays. You'll get an email at " +
+          sub.email + " once it is approved, and the event appears on the calendar the moment it is."
       }),
       el("div", { class: "done__actions" }, [
         el("button", {
           type: "button", class: "btn-primary", text: "Submit another",
-          onClick: function () { state.submitted = false; state.customTags = []; renderSubmit(); }
+          onClick: function () {
+            state.submitted = false;
+            state.draft = blankDraft();
+            state.customTags = [];
+            state.errors = {};
+            renderSubmit();
+          }
         }),
         el("button", { type: "button", class: "btn-secondary", text: "Back to calendar", onClick: closeSubmit })
       ])
     ]);
   }
 
+  /* Turn the draft into a submission and put it in the queue. */
+  function sendDraft() {
+    var d = draft();
+    state.errors = validateDraft(d);
+
+    if (Object.keys(state.errors).length) {
+      renderSubmit();
+      /* Send focus to the first thing that needs fixing, rather than leaving
+         the caret wherever the Send button was. */
+      var firstBad = one(".field--error .input, .field--error select", submitNode);
+      if (firstBad) firstBad.focus();
+      return;
+    }
+
+    var start = decimalFromTimeInput(d.startTime);
+    var end = decimalFromTimeInput(d.endTime);
+
+    var chosen = Object.keys(d.tags)
+      .map(function (k) { return d.tags[k]; })
+      .filter(Boolean);
+
+    state.submitted = S.submit({
+      title: d.title.trim(),
+      org: d.org.trim(),
+      place: d.place.trim(),
+      blurb: d.blurb.trim(),
+      date: d.date,
+      start: start,
+      time: D.spanLabel(start, end),
+      repeat: d.repeat,
+      repeatUntil: d.repeat ? d.repeatUntil : null,
+      tags: chosen.concat(state.customTags),
+      newTags: state.customTags.filter(function (t) {
+        return S.customTags().indexOf(t) === -1;
+      }),
+      by: d.by.trim(),
+      email: d.email.trim(),
+      flyer: d.flyerName || null,
+      flyerImage: d.flyerImage
+    });
+
+    /* The draft has served its purpose; it is only held across a close so a
+       half-finished form survives, and this one is finished. */
+    state.draft = blankDraft();
+    state.customTags = [];
+    state.errors = {};
+    renderSubmit();
+  }
+
+  /* Built as its own node because the read is asynchronous: the status line
+     has to repaint when the file lands, without disturbing the rest of the
+     form or the caret sitting in it. */
+  function flyerField(d) {
+    var status = el("div", { class: "dropzone__status" });
+
+    function paintStatus() {
+      status.hidden = !(d.flyerName || d.flyerNote);
+      fill(status, [
+        d.flyerImage
+          ? el("img", { class: "dropzone__preview", src: d.flyerImage, alt: "Flyer preview" })
+          : null,
+        el("div", {}, [
+          d.flyerName ? el("div", { class: "dropzone__file", text: d.flyerName }) : null,
+          d.flyerNote ? el("div", { class: "dropzone__note", text: d.flyerNote }) : null,
+          d.flyerName
+            ? el("button", {
+                type: "button", class: "btn-link", text: "Remove",
+                onClick: function () {
+                  d.flyerName = "";
+                  d.flyerImage = null;
+                  d.flyerNote = "";
+                  if (input.value) input.value = "";
+                  paintStatus();
+                }
+              })
+            : null
+        ])
+      ]);
+    }
+
+    var input = el("input", {
+      type: "file",
+      accept: "application/pdf,image/*",
+      onChange: function (e) {
+        var file = e.target.files && e.target.files[0];
+        d.flyerNote = file ? "Reading…" : "";
+        d.flyerName = "";
+        d.flyerImage = null;
+        paintStatus();
+
+        readFlyer(file, function (result) {
+          if (!result) { d.flyerNote = ""; paintStatus(); return; }
+          if (result.error) {
+            d.flyerName = "";
+            d.flyerImage = null;
+            d.flyerNote = result.error;
+            e.target.value = "";
+          } else {
+            d.flyerName = result.name;
+            d.flyerImage = result.image;
+            d.flyerNote = result.note;
+          }
+          paintStatus();
+        });
+      }
+    });
+
+    paintStatus();
+
+    return el("label", { class: "field" }, [
+      el("span", { class: "field__label", text: "Flyer page" }),
+      el("span", { class: "dropzone" }, [
+        el("span", { text: "One page, PDF or image. This is what students and the projector actually see, so make it readable from the back of a room." }),
+        input,
+        status
+      ])
+    ]);
+  }
+
   function submitForm() {
+    var d = draft();
+
     /* "Repeat until" only makes sense once something repeats. */
-    var until = labelled("Repeat until", el("input", { type: "date", class: "input input--sm" }), "field--until");
-    until.hidden = true;
+    var untilInput = el("input", { type: "date", class: "input input--sm", min: d.date || null });
+    untilInput.value = d.repeatUntil;
+    untilInput.addEventListener("input", function (e) { d.repeatUntil = e.target.value; });
+
+    var until = labelled("Repeat until", untilInput, { name: "repeatUntil", extraClass: "field--until" });
+    until.hidden = !d.repeat;
 
     var repeat = selectOf(C.REPEAT_OPTIONS, {
       class: "select",
-      onChange: function (e) { until.hidden = !e.target.value; }
+      onChange: function (e) {
+        d.repeat = e.target.value;
+        until.hidden = !e.target.value;
+        if (!e.target.value) { d.repeatUntil = ""; untilInput.value = ""; }
+      }
     });
+    repeat.value = d.repeat;
 
     var chosenTags = el("div", { class: "taglist" });
     var tagInput = el("input", {
@@ -691,7 +1376,7 @@
 
       /* Offer only the approved tags that are not already on this submission. */
       fill(approvedPicker, [{ value: "", label: "Custom Tags" }].concat(
-        C.CUSTOM_TAGS
+        S.customTags()
           .filter(function (t) { return state.customTags.indexOf(t) === -1; })
           .map(function (t) { return { value: t, label: t }; })
       ).map(function (o) { return el("option", { value: o.value, text: o.label }); }));
@@ -714,35 +1399,69 @@
 
     paintTags();
 
+    var errorCount = Object.keys(state.errors).length;
+
     return el("div", { class: "submit" }, [
       el("div", { class: "submit__form" }, [
-        labelled("Event title", el("input", { type: "text", class: "input", placeholder: "Soldering 101" })),
-        labelled("Hosting club or organization", el("input", { type: "text", class: "input", placeholder: "IEEE Student Branch" })),
+
+        errorCount
+          ? el("div", { class: "alert", role: "alert", tabindex: "-1" }, [
+              el("strong", {
+                text: errorCount === 1
+                  ? "One thing needs fixing before this can be sent."
+                  : errorCount + " things need fixing before this can be sent."
+              }),
+              el("ul", { class: "alert__list" }, Object.keys(state.errors).map(function (k) {
+                return el("li", { text: state.errors[k] });
+              }))
+            ])
+          : null,
+
+        labelled("Event title",
+          bound("input", "title", { type: "text", placeholder: "Soldering 101" }),
+          { name: "title" }),
+        labelled("Hosting club or organization",
+          bound("input", "org", { type: "text", placeholder: "IEEE Student Branch" }),
+          { name: "org" }),
 
         el("div", { class: "submit__times" }, [
-          labelled("Date", el("input", { type: "date", class: "input input--sm" })),
-          labelled("Starts", el("input", { type: "time", class: "input input--sm" })),
-          labelled("Ends", el("input", { type: "time", class: "input input--sm" }))
+          labelled("Date",
+            bound("input", "date", { type: "date", class: "input input--sm", min: C.CONFIG.today }),
+            { name: "date" }),
+          labelled("Starts", bound("input", "startTime", { type: "time", class: "input input--sm" }),
+            { name: "startTime" }),
+          labelled("Ends", bound("input", "endTime", { type: "time", class: "input input--sm" }),
+            { name: "endTime" })
         ]),
 
         el("div", { class: "submit__repeat" }, [
-          labelled("Repeats", repeat, "field--grow"),
+          labelled("Repeats", repeat, { extraClass: "field--grow" }),
           until
         ]),
 
-        labelled("Location", el("input", { type: "text", class: "input", placeholder: "Engineering E101 Lab" })),
-        labelled("What happens there", el("textarea", {
-          class: "input",
+        labelled("Location",
+          bound("input", "place", { type: "text", placeholder: "Engineering E101 Lab" }),
+          { name: "place" }),
+        labelled("What happens there", bound("textarea", "blurb", {
           rows: "4",
           placeholder: "Two or three sentences a first-year would read before deciding to come."
-        })),
+        }), { name: "blurb" }),
 
         el("div", { class: "group" }, [
           el("div", { class: "group__label", text: "Tags students filter by" }),
           el("div", { class: "group__selects" }, C.GROUPS
-            .filter(function (g) { return g.key !== "custom"; })
+            /* Custom tags have their own section below. Time of day is not
+               offered at all: it is derived from the start time, so letting
+               someone tag a 6pm event "Morning" would only ever be wrong. */
+            .filter(function (g) { return g.key !== "custom" && g.key !== "time"; })
             .map(function (g) {
-              return selectOf(groupOptions(g), { class: "select select--tag", "aria-label": g.any });
+              var select = selectOf(submitOptions(g), {
+                class: "select select--tag",
+                "aria-label": g.any,
+                onChange: function (e) { d.tags[g.key] = e.target.value; }
+              });
+              select.value = d.tags[g.key] || "";
+              return select;
             }))
         ]),
 
@@ -768,23 +1487,20 @@
           })
         ]),
 
-        el("label", { class: "field" }, [
-          el("span", { class: "field__label", text: "Flyer page" }),
-          el("span", { class: "dropzone" }, [
-            el("span", { text: "One page, PDF or image. This is what students and the projector actually see, so make it readable from the back of a room." }),
-            el("input", { type: "file", accept: "application/pdf,image/*" })
-          ])
-        ]),
+        flyerField(d),
 
         el("div", { class: "submit__who" }, [
-          labelled("Your name", el("input", { type: "text", class: "input input--sm" })),
-          labelled("CSU email", el("input", { type: "email", class: "input input--sm", placeholder: "name@colostate.edu" }))
+          labelled("Your name", bound("input", "by", { type: "text", class: "input input--sm" }),
+            { name: "by" }),
+          labelled("CSU email", bound("input", "email", {
+            type: "email", class: "input input--sm", placeholder: "name@colostate.edu"
+          }), { name: "email" })
         ]),
 
         el("div", { class: "submit__actions" }, [
           el("button", {
             type: "button", class: "btn-primary btn-primary--lg", text: "Send for approval",
-            onClick: function () { state.submitted = true; renderSubmit(); }
+            onClick: sendDraft
           }),
           el("button", { type: "button", class: "btn-secondary btn-secondary--lg", text: "Cancel", onClick: closeSubmit })
         ])
@@ -844,16 +1560,21 @@
   }
 
   function openSubmit() {
+    if (!state.submitOpen) focusBeforeOverlay = document.activeElement;
     state.submitOpen = true;
     state.submitted = false;
-    state.customTags = [];
+    state.errors = {};
     render();
   }
 
   function closeSubmit() {
     state.submitOpen = false;
     state.submitted = false;
+    state.errors = {};
+    /* The draft is kept: closing the overlay by accident, or to go and check
+       a room number, should not cost someone the form they half-filled. */
     render();
+    restoreFocus();
   }
 
   /* ======================================================================
@@ -861,17 +1582,35 @@
      ====================================================================== */
 
   function currentSubmission() {
-    var i = Math.min(state.reviewSel, Math.max(0, state.pending.length - 1));
-    return state.pending[i] || null;
+    var queue = S.queue();
+    var i = Math.min(state.reviewSel, Math.max(0, queue.length - 1));
+    return queue[i] || null;
   }
 
-  function decide(sub, note) {
-    state.pending = state.pending.filter(function (x) { return x.id !== sub.id; });
-    state.reviewSel = Math.min(state.reviewSel, Math.max(0, state.pending.length - 1));
+  /* After a decision the queue is one shorter, so the selection has to be
+     pulled back inside it, and the whole page — not just this overlay —
+     rerendered: an approval has just put events on the calendar behind. */
+  function afterDecision(note) {
+    state.reviewSel = Math.min(state.reviewSel, Math.max(0, S.queue().length - 1));
     state.changesOpen = false;
     state.feedback = "";
+    state.approvedNew = [];
     state.note = note;
-    renderReview();
+    render();
+  }
+
+  function approveCurrent(sub) {
+    var made = S.approve(sub, state.approvedNew);
+    var where = made.length === 1
+      ? "on " + D.longDayLabel(made[0].date)
+      : "across " + made.length + " dates";
+    afterDecision("Approved — “" + sub.title + "” is on the calendar " + where +
+      ", and " + sub.by + " has been emailed.");
+  }
+
+  function declineCurrent(sub) {
+    S.decline(sub);
+    afterDecision("Declined. " + sub.by + " has been emailed the reason.");
   }
 
   function reviewEmpty() {
@@ -882,6 +1621,9 @@
         class: "done__body",
         text: "Every submission has been decided. New ones land here as soon as they are sent, and the submitter is emailed the moment you approve or decline."
       }),
+      /* The last decision is the only record of what just happened, so it
+         outlives the card it was made on. */
+      state.note ? el("div", { class: "done__note", text: state.note }) : null,
       el("div", { class: "done__actions" },
         el("button", { type: "button", class: "btn-primary", text: "Back to calendar", onClick: closeReview }))
     ]);
@@ -916,9 +1658,13 @@
     var sub = currentSubmission();
     if (!sub) return reviewEmpty();
 
+    var queue = S.queue();
+    var dates = S.occurrences(sub);
+
     var sendButton = el("button", {
       type: "button", class: "btn-primary", text: "Send feedback",
       onClick: function () {
+        S.noteFeedback(sub);
         state.changesOpen = false;
         state.note = "Feedback sent to " + sub.by + " at " + sub.email + ". The submission stays in the queue.";
         state.feedback = "";
@@ -963,9 +1709,9 @@
       el("aside", { class: "queue" }, [
         el("div", { class: "queue__head" }, [
           el("span", { class: "kicker", text: "Waiting" }),
-          el("span", { class: "queue__count", text: String(state.pending.length) })
+          el("span", { class: "queue__count", text: String(queue.length) })
         ]),
-        state.pending.map(function (p, i) {
+        queue.map(function (p, i) {
           return el("button", {
             type: "button",
             class: "queue__item" + (p.id === sub.id ? " is-on" : ""),
@@ -974,12 +1720,16 @@
               state.note = "";
               state.changesOpen = false;
               state.feedback = "";
+              state.approvedNew = [];
               renderReview();
             }
           }, [
             el("span", { class: "queue__title", text: p.title }),
             el("span", { class: "queue__org", text: p.org }),
-            el("span", { class: "queue__sent", text: "Sent " + p.submitted })
+            el("span", { class: "queue__sent" }, [
+              "Sent " + p.submitted,
+              p.awaiting ? el("span", { class: "queue__flag", text: " · changes requested" }) : null
+            ])
           ]);
         })
       ]),
@@ -989,7 +1739,20 @@
         el("div", { class: "sub" }, [
           el("div", { class: "kicker", text: sub.org }),
           el("h3", { class: "sub__title", text: sub.title }),
-          el("div", { class: "sub__when", text: sub.when + " · " + sub.place }),
+          el("div", {
+            class: "sub__when",
+            text: D.shortDayLabel(sub.date) + ", " + sub.time + " · " + sub.place
+          }),
+          /* A repeating submission is not one decision — say how many events
+             approving it will actually create. */
+          dates.length > 1
+            ? el("div", {
+                class: "sub__series",
+                text: "Approving publishes " + dates.length + " events, " +
+                  D.shortDayLabel(dates[0]) + " through " +
+                  D.shortDayLabel(dates[dates.length - 1]) + "."
+              })
+            : null,
           el("p", { class: "sub__blurb", text: sub.blurb }),
 
           el("div", { class: "sub__block" }, [
@@ -1008,10 +1771,9 @@
 
           el("div", { class: "sub__decide" }, [
             el("button", {
-              type: "button", class: "btn-primary", text: "Approve and publish",
-              onClick: function () {
-                decide(sub, "Approved. It is on the calendar now and " + sub.by + " has been emailed.");
-              }
+              type: "button", class: "btn-primary",
+              text: dates.length > 1 ? "Approve and publish " + dates.length : "Approve and publish",
+              onClick: function () { approveCurrent(sub); }
             }),
             el("button", {
               type: "button", class: "btn-secondary", text: "Request changes",
@@ -1019,9 +1781,7 @@
             }),
             el("button", {
               type: "button", class: "btn-decline", text: "Decline",
-              onClick: function () {
-                decide(sub, "Declined. " + sub.by + " has been emailed the reason.");
-              }
+              onClick: function () { declineCurrent(sub); }
             })
           ]),
 
@@ -1034,7 +1794,16 @@
             el("span", { class: "meta__label meta__label--flyer", text: "Flyer" }),
             sub.flyer
               ? el("div", { class: "flyerproof" }, [
-                  el("div", { class: "flyerproof__sheet" }),
+                  /* The artwork itself when it came through as an image; the
+                     hatched sheet only stands in for a PDF, which the browser
+                     cannot render here. */
+                  sub.flyerImage
+                    ? el("img", {
+                        class: "flyerproof__image",
+                        src: sub.flyerImage,
+                        alt: "Flyer submitted for " + sub.title
+                      })
+                    : el("div", { class: "flyerproof__sheet" }),
                   el("div", { class: "flyerproof__name", text: sub.flyer })
                 ])
               : el("div", {
@@ -1045,11 +1814,12 @@
           el("div", {}, [
             el("div", { class: "meta__label", text: "Submitted by" }),
             el("div", { class: "meta__value", text: sub.by }),
-            el("div", { class: "meta__sub", text: sub.email })
+            el("div", { class: "meta__sub" },
+              el("a", { href: "mailto:" + sub.email, text: sub.email }))
           ]),
           el("div", {}, [
             el("div", { class: "meta__label", text: "Repeats" }),
-            el("div", { class: "meta__value", text: sub.repeat })
+            el("div", { class: "meta__value", text: C.repeatLabel(sub.repeat, sub.repeatUntil) })
           ]),
           el("div", {}, [
             el("div", { class: "meta__label", text: "Received" }),
@@ -1085,6 +1855,7 @@
   }
 
   function openReview() {
+    if (!state.reviewOpen) focusBeforeOverlay = document.activeElement;
     state.reviewOpen = true;
     state.note = "";
     render();
@@ -1094,10 +1865,9 @@
     state.reviewOpen = false;
     state.changesOpen = false;
     state.feedback = "";
-    if ((location.hash || "").toLowerCase() === "#review") {
-      history.replaceState(null, "", location.pathname + location.search);
-    }
+    state.approvedNew = [];
     render();
+    restoreFocus();
   }
 
   /* ======================================================================
@@ -1148,18 +1918,29 @@
         ]),
         el("div", { class: "fx__countdown", "data-countdown": true }),
         el("aside", { class: "reel reel--fx" }, [
-          el("div", { class: "kicker reel__label", text: "Upcoming this week" }),
+          /* The label follows the view: run the projector on the month grid
+             and "Upcoming this week" is simply wrong. */
+          el("div", {
+            class: "kicker reel__label",
+            text: state.view === "month" ? "Upcoming this month" : "Upcoming this week"
+          }),
           el("div", { class: "reel__list", "data-reel": "fx" })
         ])
       ]),
 
-      el("div", { class: "fx__foot" })
+      el("div", { class: "fx__foot" }, [
+        el("span", {
+          class: "fx__hint",
+          text: "← → or space to step · Esc to exit"
+        })
+      ])
     ]);
 
     overlays.appendChild(slideshowNode);
   }
 
   function startSlideshow() {
+    if (!state.slideshow) focusBeforeOverlay = document.activeElement;
     state.slideshow = true;
     state.t = 0;
     render();
@@ -1172,6 +1953,7 @@
   function stopSlideshow() {
     state.slideshow = false;
     render();
+    restoreFocus();
     try {
       if (document.fullscreenElement) {
         var p = document.exitFullscreen();
@@ -1191,7 +1973,7 @@
     renderSlideshow();
 
     var detail = state.detailId
-      ? C.EVENTS.filter(function (e) { return e.id === state.detailId; })[0]
+      ? S.eventById(state.detailId)
       : null;
 
     var existing = one(".modal", overlays);
@@ -1207,14 +1989,28 @@
     renderFilters();
     renderToolbar();
     renderShowcase();
-    syncScrollLock();
+    syncOverlayState();
+    syncHash();
   }
 
   /* ======================================================================
      The slide timer
+
+     The showcase advances on its own, which is right when someone is looking
+     at it and wrong the moment they are not: reading an event's detail while
+     the flyer behind it changes every nine seconds is disorienting, and a
+     background tab burning a timer for nobody is pure waste.
      ====================================================================== */
 
+  function timerRunning() {
+    if (document.hidden) return false;
+    if (state.detailId || state.submitOpen || state.reviewOpen) return false;
+    return visible().length > 1;
+  }
+
   function tick() {
+    if (!timerRunning()) return;
+
     var secs = C.CONFIG.slideSeconds;
     var next = state.t + 0.2 / secs;
     if (next >= 1) {
@@ -1248,16 +2044,44 @@
       if (state.submitOpen) { closeSubmit(); return; }
       if (state.reviewOpen) { closeReview(); return; }
       if (state.slideshow) { stopSlideshow(); return; }
+      /* Nothing open and a search running: Escape clears it, which is what
+         the key does in every other search box. */
+      if (state.query) { clearFilters(); return; }
     }
 
-    if (state.slideshow && !typing) {
+    if (typing) return;
+
+    if (state.slideshow) {
       if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); go(state.active + 1); }
       if (e.key === "ArrowLeft") { e.preventDefault(); go(state.active - 1); }
+      return;
+    }
+
+    /* Arrows step between events inside an open event; on the calendar itself
+       they step the week or month, matching the toolbar's ‹ ›. */
+    if (state.detailId) {
+      if (e.key === "ArrowRight") { e.preventDefault(); stepDetail(1); }
+      if (e.key === "ArrowLeft") { e.preventDefault(); stepDetail(-1); }
+      return;
+    }
+
+    if (state.submitOpen || state.reviewOpen) return;
+
+    if (e.key === "ArrowRight") { e.preventDefault(); shift(1); }
+    if (e.key === "ArrowLeft") { e.preventDefault(); shift(-1); }
+    /* "/" focuses search, the convention everywhere else on the web. */
+    if (e.key === "/") {
+      e.preventDefault();
+      var box = one("#search");
+      if (box) { box.focus(); box.select(); }
     }
   }
 
-  function onHashChange() {
-    if ((location.hash || "").toLowerCase() === "#review") openReview();
+  function goToday() {
+    state.anchor = C.CONFIG.today;
+    state.active = 0;
+    state.t = 0;
+    render();
   }
 
   function start() {
@@ -1265,20 +2089,44 @@
     one('[data-action="start-slideshow"]').addEventListener("click", startSlideshow);
     one('[data-action="prev"]').addEventListener("click", function () { shift(-1); });
     one('[data-action="next"]').addEventListener("click", function () { shift(1); });
-    one('[data-action="today"]').addEventListener("click", function () {
-      state.anchor = C.CONFIG.today;
-      state.active = 0;
+    one('[data-action="today"]').addEventListener("click", goToday);
+    one('[data-action="view-week"]').addEventListener("click", function () { setView("week"); });
+    one('[data-action="view-month"]').addEventListener("click", function () { setView("month"); });
+    one('[data-action="download-view"]').addEventListener("click", downloadView);
+
+    one('[data-action="reset-store"]').addEventListener("click", function () {
+      if (!window.confirm("Discard every submission and approval made in this browser? The calendar goes back to what it ships with.")) return;
+      S.reset();
+      state.reviewSel = 0;
+      state.note = "";
+      gridSignature = null;
+      render();
+      toast("Back to the shipped calendar");
+    });
+
+    var search = one("#search");
+    search.value = state.query;
+    search.addEventListener("input", function (e) { setQuery(e.target.value); });
+    /* type="search" clears on Escape without firing input in some browsers. */
+    search.addEventListener("search", function (e) { setQuery(e.target.value); });
+
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("popstate", applyRoute);
+
+    /* Coming back to a tab that has been open since yesterday should not show
+       yesterday as today. */
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) return;
+      var now = D.toIso(new Date());
+      if (now !== C.CONFIG.today) {
+        C.CONFIG.today = now;
+        gridSignature = null;
+      }
       state.t = 0;
       render();
     });
-    one('[data-action="view-week"]').addEventListener("click", function () { setView("week"); });
-    one('[data-action="view-month"]').addEventListener("click", function () { setView("month"); });
 
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("hashchange", onHashChange);
-
-    render();
-    onHashChange();
+    applyRoute();
     setInterval(tick, 200);
   }
 

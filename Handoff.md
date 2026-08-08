@@ -1,8 +1,17 @@
 # Handoff — First-Year Engineering Calendar
 
-Written 2026-08-07. Read this with [README.md](README.md), which covers how to run
-the app and how the code is laid out. This file covers what state the work is in,
-what is deliberately the way it is, and what is still open.
+Written 2026-08-07, extended 2026-08-08. Read this with [README.md](README.md),
+which covers how to run the app and how the code is laid out. This file covers
+what state the work is in, what is deliberately the way it is, and what is still
+open.
+
+> **2026-08-08 — the functionality pass.** Everything up to this point was the
+> shape of the app: the layout, the type, the chrome. The screens looked
+> finished but mostly did not do anything — the submit form read none of its own
+> fields, review decisions changed nothing, and there was no search, no way to
+> get an event into your own calendar, and no way to link to one. That pass is
+> [written up below](#the-functionality-pass-2026-08-08). The open items in this
+> document that it closed are marked.
 
 ## Where it lives
 
@@ -20,7 +29,8 @@ filesystem. Serve it with `python3 -m http.server 4173`.
 ## State: everything is committed and live
 
 The dates, the flyer edits and this document are all on `main` and published.
-Working tree clean as of writing.
+Working tree clean as of writing. (The 2026-08-08 functionality pass is a
+separate set of changes on top; see the bottom of this file.)
 
 ### A trap worth knowing about, if you edit a flyer PDF again
 
@@ -141,15 +151,20 @@ PDF stay in step.
    They are publicly fetchable on the live site. The ISPE flyer also names a speaker.
 4. **The seeded events are placeholder content.** Real events mean replacing
    `EVENTS` in `js/data.js`.
+5. **Nothing is emailed.** Approving, declining and requesting changes all say the
+   submitter has been notified. They have not been — see below.
 
 ## Notes for whoever extends this
 
 - `js/data.js` is the backend seam. Keep the shapes, swap the literals for a
-  fetch, and nothing in `app.js` needs to change. The review queue's `PENDING` and
-  the submit form are UI-only today — nothing is persisted and no mail is sent;
-  the copy about emailing submitters describes intended behaviour, not real behaviour.
+  fetch, and nothing above it needs to change. ~~The review queue's `PENDING` and
+  the submit form are UI-only~~ — as of 2026-08-08 both are wired through
+  `js/store.js` and persist to localStorage; only the emailing is still notional.
 - Filter semantics worth preserving: an event tagged `All disciplines` answers any
-  choice in the discipline group (`openToAll` on that group).
+  choice in the discipline group (`openToAll` on that group). It is not one of the
+  group's `chips`, so it never appears in the filter bar — but the submit form
+  offers it as "Open to every discipline" and defaults to it, because a submission
+  with no discipline would otherwise vanish under every discipline filter.
 - Weeks are Monday-first throughout; day-of-week indexes are `(getDay() + 6) % 7`.
   Dates are whole days in local time, never UTC instants, so an event never slides
   a day across time zones.
@@ -159,3 +174,98 @@ PDF stay in step.
   were in this folder; both were deleted after their contents were copied and
   renamed into `assets/csu/` and `flyers/`. They are recoverable only from commit
   `aa229a2` onward — the originals are gone from disk.
+
+## The functionality pass, 2026-08-08
+
+### The three things the interface claimed but did not do
+
+**The submit form was a mock.** Not one field was read. "Send for approval" set a
+flag and showed the thank-you screen — on a completely empty form — and nothing
+reached the review queue. It now holds a draft in state (so a validation failure
+can rebuild the form without eating a word of what was typed), validates every
+field, and produces a real submission.
+
+**Review decisions were theatre.** Approving removed the card and said "it is on
+the calendar now"; it was not. Approving a new custom tag did nothing. A reload
+put everything back. Approving now publishes one event per occurrence and makes
+approved tags filterable immediately.
+
+**There was no search**, although the submit form told organisers that "students
+see these and can search them." There is now, over title, org, place, blurb and
+every tag, with words ANDed.
+
+### js/store.js
+
+The new seam. `data.js` stays the read-only seed; `store.js` is the live calendar
+— seed plus delta — and everything now reads events, the queue, custom tags and
+flyers from it. Only the delta is persisted, so editing `data.js` still changes
+what everybody sees and a stale stored copy of a seeded event can never pin
+itself in place. Moving to a server means reimplementing `load` and `save`;
+every mutation already funnels through them.
+
+`PENDING` in `data.js` gained the fields a submission needs to become an event —
+`date`, `start`, `time`, a machine-readable `repeat` — in place of the prose
+`when` the reviewer reads, which is now derived.
+
+### Flyer uploads without a server
+
+An uploaded image is downscaled to 1400px and re-encoded as a JPEG data URL
+(~20KB), which fits in localStorage and means the reviewer sees the actual
+artwork rather than a hatched rectangle. A quota failure retries without the
+artwork rather than losing the submission. PDFs cannot be rasterised in the
+browser, so only the filename travels.
+
+### Bugs found and fixed along the way
+
+- **A NUL byte in `js/app.js`.** The empty-stage cache key was `"\x00empty:"`,
+  not `" empty:"` — almost certainly an artifact of the design-tool export. It
+  made `grep` treat the whole file as binary, which is worth knowing if a search
+  ever comes back empty on a file you can plainly see the text in.
+- **The empty stage went stale.** That same cache key named the view and whether
+  a filter was set, but not the anchor date — so stepping from one empty week to
+  another left the previous week's "Next event · <date>" sitting on the stage,
+  pointing at the wrong day.
+- **The month grid and its own count disagreed.** The grid draws whole
+  Monday-to-Sunday weeks and so reaches into the months either side, but the
+  range was the calendar month, so the toolbar could say "3 events" above four
+  visible ones. The month range is now the span actually drawn; the label still
+  reads "August 2026" because it is taken from the anchor, not from the
+  neighbouring Monday the grid starts on.
+- **Week-counting broke across daylight saving.** `(r.to - start) / 86400000`
+  subtracts two local midnights, which is an hour out twice a year — enough for
+  `Math.ceil` to tip to the wrong number of weeks. Counted off the calendar now,
+  via `Date.UTC` of the y/m/d parts.
+- **Stepping through events filled the history stack.** Each step pushed an
+  entry, so Escape walked back through them one at a time instead of closing.
+  Opening an overlay pushes; moving between them replaces.
+- **Time of day was offered as a submit-form tag.** It is derived from the start
+  hour, so the only thing choosing it by hand could do is contradict the event.
+  Removed from the form; still a filter.
+
+### Deliberate calls
+
+- **The slide timer stops** behind any dialog and on a hidden tab, and the
+  countdown says "Paused" rather than freezing on a number. Note that some
+  embedded preview panes report `document.hidden` permanently, which is why it
+  reads "Paused" in one.
+- **The draft survives closing the submit overlay** but is cleared once sent.
+  Closing to go and check a room number should not cost you the form.
+- **A CSU address is required** — `*.colostate.edu`, which admits the
+  `rams.colostate.edu` the seeded submitter uses. The office replies to it, so
+  anything else is a submission nobody can follow up.
+- **`.ics` uses a real VTIMEZONE**, not floating times and not UTC. Floating
+  drifts if the phone crosses a time zone over winter break; UTC bakes in
+  whichever offset applied the day the file was generated, which silently moves
+  any event on the far side of a DST change.
+- **Recurrence is capped at 60 occurrences**, and "monthly, same weekday" keeps
+  the 2nd Tuesday the 2nd Tuesday, falling back to the 4th in a month with no
+  5th.
+
+### Still not real
+
+No mail is sent. Approve, decline and request-changes all say the submitter has
+been notified, and that remains the one claim the interface makes that nothing
+behind it honours. It is also the one that genuinely needs a server.
+
+Persistence is per-browser. Two people reviewing the same queue do not see each
+other's decisions — which is the same statement.
