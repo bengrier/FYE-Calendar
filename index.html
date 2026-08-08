@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>First-Year Engineering Calendar · Walter Scott, Jr. College of Engineering</title>
+<meta name="description" content="Events, workshops, club builds and industry nights for first-year engineering students at Colorado State University.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,300..800;1,8..60,300..700&display=swap">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<div class="app">
+
+  <header class="csu-header">
+    <div class="csu-header__top">
+      <div class="csu-header__brand">
+        <a class="csu-header__sig" href="https://www.colostate.edu/">
+          <img src="assets/csu/sig-stack.svg" alt="Colorado State University">
+        </a>
+        <div class="csu-header__unit">Walter Scott, Jr. College of Engineering</div>
+      </div>
+    </div>
+
+    <div class="csu-header__bar csu-header__bar--tall">
+      <h1 class="csu-header__title">First-Year Engineering Calendar</h1>
+      <div class="csu-header__actions">
+        <button type="button" class="btn-brand btn-brand--ghost" data-action="open-submit">Submit an Event</button>
+        <button type="button" class="btn-brand btn-brand--solid" data-action="start-slideshow">Slide Show</button>
+      </div>
+    </div>
+
+    <div class="csu-rule"></div>
+  </header>
+
+  <div class="page">
+
+    <section class="showcase" data-showcase>
+      <div class="showcase__stage" data-stage></div>
+
+      <div class="showcase__meta">
+        <div class="showcase__row">
+          <div class="showcase__kicker" data-cur="org"></div>
+          <div class="showcase__when" data-cur="when"></div>
+        </div>
+        <div class="showcase__row">
+          <div class="showcase__title" data-cur="title"></div>
+          <div class="showcase__place" data-cur="place"></div>
+        </div>
+      </div>
+
+      <div class="showcase__countdown" data-countdown></div>
+
+      <aside class="reel">
+        <div class="kicker reel__label">Now showing · in order</div>
+        <div class="reel__list" id="reel" data-reel="main"></div>
+      </aside>
+    </section>
+
+    <section class="filters">
+      <div class="filters__row">
+        <span class="filters__label">Filter</span>
+        <div class="filters__row" id="filters"></div>
+      </div>
+    </section>
+
+    <div class="rule-thick"></div>
+
+    <div class="toolbar">
+      <div class="toolbar__left">
+        <div class="toolbar__steps">
+          <button type="button" class="btn-step" data-action="prev" title="Previous" aria-label="Previous">&lsaquo;</button>
+          <button type="button" class="btn-step" data-action="next" title="Next" aria-label="Next">&rsaquo;</button>
+        </div>
+        <div class="toolbar__range" data-range></div>
+        <button type="button" class="btn-quiet" data-action="today">Today</button>
+      </div>
+      <div class="toolbar__right">
+        <span class="toolbar__count" id="visible-count"></span>
+        <div class="viewtoggle">
+          <button type="button" class="viewtoggle__btn" data-action="view-week">Week</button>
+          <button type="button" class="viewtoggle__btn" data-action="view-month">Month</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="rule-thin"></div>
+
+    <div id="calendar"></div>
+
+  </div>
+</div>
+
+<div id="overlays"></div>
+
+<script src="js/dates.js"></script>
+<script src="js/data.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

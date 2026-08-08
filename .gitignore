@@ -1,0 +1,4 @@
+.DS_Store
+
+# Per-machine Claude Code permissions; .claude/launch.json is shared on purpose.
+.claude/settings.local.json
