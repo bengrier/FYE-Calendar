@@ -53,10 +53,9 @@ order it happens; clicking a row in the running order jumps to it.
 - `today` — the real current date. Pin it to an ISO string (`"2026-04-27"`) if
   you want the calendar to open somewhere specific for a demo.
 
-The seeded events in `js/data.js` are a sample semester (April–May 2026), so
-today's week will read as empty until real events go in. When a view has nothing
-in it the showcase collapses to one line and, where the calendar still holds
-something later, offers a jump to the next event.
+The seeded events in `js/data.js` are a sample semester running Aug 3 – Sep 11,
+2026. When a view has nothing in it the showcase collapses to one line and, where
+the calendar still holds something later, offers a jump to the next event.
 
 ## Notes on rendering
 
