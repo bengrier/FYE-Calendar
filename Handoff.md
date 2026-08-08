@@ -5,6 +5,16 @@ which covers how to run the app and how the code is laid out. This file covers
 what state the work is in, what is deliberately the way it is, and what is still
 open.
 
+> **2026-08-08, later — submissions go to Microsoft Forms.** The last thing the
+> interface claimed but did not do was email anybody, and that needed a server.
+> It now needs one less: the submit form still collects and checks everything,
+> then hands off to the office's Microsoft Form, so responses land in SharePoint
+> and Microsoft does the notifying. The seeded events are also flagged as
+> placeholders. Written up at [the bottom](#the-microsoft-forms-pass-2026-08-08).
+> **One thing is not finished and cannot be by me:** somebody has to build that
+> Form in CSU's tenant and paste its pre-filled link into `CONFIG`. Until then
+> the submit form says so and its button is disabled.
+
 > **2026-08-08 — the functionality pass.** Everything up to this point was the
 > shape of the app: the layout, the type, the chrome. The screens looked
 > finished but mostly did not do anything — the submit form read none of its own
@@ -138,28 +148,48 @@ PDF stay in step.
 
 ## Open items
 
-1. **Poster dates now contradict the calendar.** The Major Declaration flyer reads
-   **MONDAY, MAY 4** but the event is Mon Aug 31; the ISPE flyer reads **April
-   30th** but the event is Thu Aug 27. Both are visible on the stage right next to
-   the calendar date. The editing method above works for these too.
-2. **Season-inconsistent copy.** "Last Cookie Friday of the Year" now falls in
-   September; "Major Declaration Ceremony" celebrates "your first year" but sits
-   at the start of one; "Concrete Canoe Send-Off … before it goes to regionals" is
-   a spring event now in September. These are content calls, deliberately left alone.
+1. ~~**Poster dates now contradict the calendar.**~~ The Major Declaration flyer
+   reads **MONDAY, MAY 4** against an Aug 31 event, and the ISPE flyer **April
+   30th** against Aug 27. **Closed as won't-fix, 2026-08-08:** every seeded event
+   is placeholder content that gets deleted before launch, so repainting posters
+   for events that will not ship is wasted work. If any of these flyers survives
+   into the real calendar, this comes back — the editing method above still works.
+2. ~~**Season-inconsistent copy.**~~ Same call, same reason: placeholder prose.
 3. **QR codes are still live.** The ISPE flyer's GroupMe and RSVP codes and the
    AIAA flyer's Instagram code were never touched — only emails were, as asked.
-   They are publicly fetchable on the live site. The ISPE flyer also names a speaker.
-4. **The seeded events are placeholder content.** Real events mean replacing
-   `EVENTS` in `js/data.js`.
-5. **Nothing is emailed.** Approving, declining and requesting changes all say the
-   submitter has been notified. They have not been — see below.
+   They are publicly fetchable on the live site. The ISPE flyer also names a
+   speaker. **Deliberately left, 2026-08-08.** Worth revisiting before launch if
+   these flyers stay, since it is real people's contact channels on a public site.
+4. ~~**The seeded events are placeholder content.**~~ Still true, and now said
+   out loud — see [the placeholder flag](#the-seeded-events-say-they-are-seeded).
+5. ~~**Nothing is emailed.**~~ Closed by moving submissions to Microsoft Forms;
+   nothing in the interface now claims to send mail. See below.
+
+### Still open, and needing someone with a CSU login
+
+**The Microsoft Form does not exist yet.** Everything on this side is built and
+tested against a stand-in link; `CONFIG.submitForm.prefillUrl` in `js/data.js` is
+empty. README's "Connecting the Microsoft Form" is the ten-question build and the
+one paste. Until it is done nobody can submit an event, and the form says exactly
+that rather than pretending.
+
+**The review queue is orphaned, and its fate is a decision, not a task.** Since
+submissions go to SharePoint, nothing new arrives in it; it holds the seeded
+examples, says so at the top, and still publishes them onto the local calendar.
+Two honest options: delete it — `js/store.js`, the queue rendering and `PENDING`
+go with it, and `app.js` loses roughly a third of its bulk — or keep it as a way
+to try the publish flow. It was left in place because deleting a third of the app
+on an assumption is worse than leaving something clearly labelled. `S.submit()`
+in `js/store.js` is now unused either way.
 
 ## Notes for whoever extends this
 
 - `js/data.js` is the backend seam. Keep the shapes, swap the literals for a
   fetch, and nothing above it needs to change. ~~The review queue's `PENDING` and
   the submit form are UI-only~~ — as of 2026-08-08 both are wired through
-  `js/store.js` and persist to localStorage; only the emailing is still notional.
+  `js/store.js` and persist to localStorage; ~~only the emailing is still
+  notional~~ and later that day the submit form was rerouted to Microsoft Forms,
+  so it no longer touches the store at all.
 - Filter semantics worth preserving: an event tagged `All disciplines` answers any
   choice in the discipline group (`openToAll` on that group). It is not one of the
   group's `chips`, so it never appears in the filter bar — but the submit form
@@ -263,9 +293,89 @@ browser, so only the filename travels.
 
 ### Still not real
 
+*(Superseded by the pass below — no mail is sent, but nothing claims it is any
+more, and submissions no longer live only in one browser.)*
+
 No mail is sent. Approve, decline and request-changes all say the submitter has
 been notified, and that remains the one claim the interface makes that nothing
 behind it honours. It is also the one that genuinely needs a server.
 
 Persistence is per-browser. Two people reviewing the same queue do not see each
 other's decisions — which is the same statement.
+
+## The Microsoft Forms pass, 2026-08-08
+
+### What was chosen, and what was ruled out
+
+The brief was "cheap and truthful", with submissions landing in SharePoint and
+no permissions fight. Three routes were possible and two were rejected:
+
+- **Post to the Microsoft Form from this page.** Not possible. Forms has no
+  public submission API; the endpoint its own front end uses is CORS-blocked and
+  token-gated, and anything built on it breaks the first time Microsoft changes
+  it. This is worth knowing because it looks feasible from the outside.
+- **Post to SharePoint via a Power Automate HTTP trigger.** Real, supported, and
+  the only route that keeps the whole thing to one click. Rejected on two counts:
+  "When an HTTP request is received" is a **premium** connector, so it needs a
+  licence somebody has to own; and its URL carries its own SAS signature, which
+  would sit in public JS in a public repo for anyone to extract and spam. Worth
+  revisiting if the licence ever appears — the abuse risk is a junk queue, not a
+  data breach, and a human reads everything anyway.
+- **Hand off to a pre-filled Form.** Chosen. Officially supported, no licence,
+  nothing secret in the client, nothing public to abuse.
+
+### The handoff
+
+`js/msform.js` builds the pre-filled URL; the submit form is otherwise unchanged
+above the flyer field. Pressing the button validates, opens the Form in a new
+tab, and shows a screen that is careful **not** to read like a receipt: this page
+cannot know whether anyone pressed Submit on Microsoft's page, so it says the
+submission is not made until they do, and keeps both the link and their answers
+in reach. Nothing is written to the store.
+
+**Sentinels, not question ids.** Microsoft names its questions `r1a2b3c…`.
+Rather than have somebody read those out of a URL and pair them with fields by
+hand — a job that fails silently — the setup asks them to answer each question
+with a word the code recognises (`FYE_TITLE`, `FYE_ORG`, …) and paste the
+resulting link whole. The substitution is a single regex pass over an alternation
+of all ten, so one field's text can never be re-read as another's sentinel. A
+link missing any of them is reported by name in the form itself.
+
+**The flyer upload is gone.** A file is the one answer a pre-filled link cannot
+carry, so the flyer is attached on the Form. The in-browser downscale-to-data-URL
+path went with it; `git show 8451e41` has it if a route-A future wants it back.
+Note that a Forms file-upload question requires the responder to be signed in to
+the tenant — fine for students, and it is why this is not worth working around.
+
+**Blurbs are capped at 600 characters.** Everything travels inside a URL. This is
+comfortably inside any limit and a blurb that long was not being read anyway.
+
+### The review queue was told the truth
+
+Approve and decline no longer claim the submitter was emailed — they now say, in
+as many words, to go and tell them. **Request changes** was the worst of it,
+since sending a message is the entire point of the button; it now composes the
+reply, quotes the submission underneath, and opens it in the reviewer's own mail
+client, where they send it themselves. The overlay opens with a note saying
+nothing new arrives here any more.
+
+### The seeded events say they are seeded
+
+`EVENTS` is flagged `temporary` in one pass at the bottom of the array rather
+than field-by-field, so real events can simply be added without the flag. Each
+placeholder tile carries a **Sample** corner label, its dialog a magenta badge,
+and a line above the grid states it — worded from a live count, so it reads
+"every event on this calendar" while they are all placeholders, switches to "23
+events are placeholder data" as real ones arrive, and removes itself when the
+last one goes. Magenta throughout, deliberately: placeholder content should not
+look like part of the furniture.
+
+To strip them: empty `EVENTS` and delete the `forEach` under it.
+
+### Still not real, honestly this time
+
+No mail is sent from this page, and nothing says it is. The office is notified by
+Microsoft when a response arrives, and replies from Outlook.
+
+The review queue's persistence is still per-browser, which no longer matters much
+now that nothing lands in it.

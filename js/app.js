@@ -16,6 +16,7 @@
   var C = window.CalData;
   var S = window.CalStore;   /* the live calendar: seed + everything since */
   var ICS = window.CalIcs;
+  var MS = window.CalMsForm; /* the handoff to the office's Microsoft Form */
 
   /* ======================================================================
      DOM helpers
@@ -737,7 +738,27 @@
     /* Only offered once the visitor has actually changed something — for
        everyone else it is a button that undoes nothing. */
     one('[data-action="reset-store"]').hidden = !S.isDirty();
+    paintSampleNote();
     syncSubRow();
+  }
+
+  /* The seeded events are placeholder content, and the calendar says so rather
+     than letting anyone plan around an invented date. Counted across the whole
+     calendar, not the current view, because "every event here is made up" is a
+     claim about the calendar — and it goes quiet by itself the moment the last
+     placeholder is replaced with something real. */
+  function paintSampleNote() {
+    var note = one("#sample-note");
+    var all = S.events();
+    var fake = all.filter(function (ev) { return ev.temporary; }).length;
+
+    note.hidden = fake === 0;
+    if (!fake) return;
+
+    note.textContent = fake === all.length
+      ? "Sample content — every event on this calendar is placeholder data, not a real event."
+      : fake + (fake === 1 ? " event is" : " events are") +
+        " placeholder data, not real events.";
   }
 
   /* The strip under the toolbar collapses entirely when it holds nothing, so
@@ -765,7 +786,10 @@
       class: "eventcard" + (isPast(ev.date) ? " is-past" : ""),
       onClick: function () { openDetail(ev.id); }
     }, [
-      el("span", { class: "eventcard__thumb" }, flyerNode(ev, "thumb")),
+      el("span", { class: "eventcard__thumb" }, [
+        flyerNode(ev, "thumb"),
+        ev.temporary ? el("span", { class: "eventcard__sample", text: "Sample" }) : null
+      ]),
       el("span", { class: "eventcard__body" }, [
         el("span", { class: "eventcard__time", text: ev.time }),
         el("span", { class: "eventcard__title", text: ev.title }),
@@ -921,6 +945,12 @@
       el("div", { class: "modal__info" }, [
         el("div", { class: "modal__topline" }, [
           el("div", { class: "kicker", text: ev.org }),
+          /* Orthogonal to past/today, and stated where someone is closest to
+             acting on the event — this is the dialog with "Add to calendar"
+             in it. */
+          ev.temporary
+            ? el("span", { class: "badge badge--sample", text: "Sample event" })
+            : null,
           isPast(ev.date)
             ? el("span", { class: "badge badge--past", text: "Already happened" })
             : isToday(ev.date)
@@ -989,8 +1019,7 @@
          would drop the event out of every discipline filter, which is the
          opposite of what leaving a field alone should mean. */
       tags: { discipline: "All disciplines" },
-      by: "", email: "",
-      flyerName: "", flyerImage: null, flyerNote: ""
+      by: "", email: ""
     };
   }
 
@@ -1010,6 +1039,8 @@
     return h + mins / 60;
   }
 
+  var MAX_BLURB = 600;
+
   /* The copy asks for a CSU address and the office replies to it, so anything
      else is a submission nobody can follow up. Subdomains count — the seeded
      submitter is on rams.colostate.edu. */
@@ -1025,6 +1056,11 @@
     if (!d.place.trim()) errors.place = "Say where it is.";
     if (d.blurb.trim().length < 20) {
       errors.blurb = "A sentence or two, so a first-year knows what they are walking into.";
+    } else if (d.blurb.trim().length > MAX_BLURB) {
+      /* Everything is handed over inside a URL, and a long enough one gets
+         truncated somewhere between here and Microsoft. This is well inside
+         that, and a blurb this long was not going to be read anyway. */
+      errors.blurb = "Keep it under " + MAX_BLURB + " characters — that is about a short paragraph.";
     }
 
     if (!d.date) {
@@ -1101,95 +1137,69 @@
     return node;
   }
 
-  /* ----------------------------------------------------------------------
-     The flyer upload
-
-     There is no server to post a file to, so an uploaded image is downscaled
-     in the browser and carried as a data URL — small enough to sit in
-     localStorage, and real enough that the reviewer sees the actual artwork
-     rather than a hatched rectangle. A PDF cannot be rendered this way, so
-     only its name travels and the office attaches the page itself.
-     ---------------------------------------------------------------------- */
-
-  var MAX_UPLOAD = 12 * 1024 * 1024;
-  var MAX_EDGE = 1400;
-
-  function readFlyer(file, done) {
-    if (!file) { done(null); return; }
-
-    if (file.size > MAX_UPLOAD) {
-      done({ error: "That file is over 12 MB. Export it smaller and try again." });
-      return;
-    }
-
-    if (file.type === "application/pdf") {
-      done({ name: file.name, image: null, note: "PDF received — the office attaches the page itself." });
-      return;
-    }
-
-    if (file.type.indexOf("image/") !== 0) {
-      done({ error: "Flyers have to be a PDF or an image." });
-      return;
-    }
-
-    var reader = new FileReader();
-    reader.onerror = function () { done({ error: "That file could not be read." }); };
-    reader.onload = function () {
-      var img = new Image();
-      img.onerror = function () { done({ error: "That image could not be opened." }); };
-      img.onload = function () {
-        var scale = Math.min(1, MAX_EDGE / Math.max(img.width, img.height));
-        var canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(img.width * scale));
-        canvas.height = Math.max(1, Math.round(img.height * scale));
-        canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-        try {
-          done({
-            name: file.name,
-            image: canvas.toDataURL("image/jpeg", 0.85),
-            note: "Ready — this is what the reviewer sees."
-          });
-        } catch (e) {
-          /* A canvas tainted by a cross-origin source cannot be exported. */
-          done({ name: file.name, image: null, note: "Received — preview unavailable." });
-        }
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(file);
-  }
-
+  /* The handoff is not a receipt, and this screen must not read like one. The
+     submission is not made until the submitter presses Submit on Microsoft's
+     page, and this page has no way of learning whether they did — so it says
+     what it actually knows, and keeps the link in reach. */
   function submitDone() {
-    var sub = state.submitted;
-    var dates = S.occurrences(sub);
+    var handoff = state.submitted;
+    var sub = handoff.summary;
 
     return el("div", { class: "done" }, [
-      el("div", { class: "done__kicker", text: "Received" }),
-      el("h3", { class: "done__title", text: "Your event is in the review queue." }),
+      el("div", { class: "done__kicker", text: "One step left" }),
+      el("h3", {
+        class: "done__title",
+        text: handoff.opened
+          ? "Finish on the CSU form — it opened in a new tab."
+          : "Finish on the CSU form."
+      }),
 
-      /* Reading the submission back is the only confirmation there is that the
-         right thing was sent — worth more here than another line of reassurance. */
+      /* Reading the answers back is the only confirmation there is that the
+         right thing was filled in — worth more here than another line of
+         reassurance. */
       el("div", { class: "done__recap" }, [
         el("div", { class: "done__recaptitle", text: sub.title }),
         el("div", { class: "done__recapline", text: sub.org + " · " + sub.place }),
         el("div", {
           class: "done__recapline",
+          /* Only the first letter drops: the rest of the label carries a month
+             name, and "until dec 8" reads like a typo. */
           text: D.longDayLabel(sub.date) + ", " + sub.time +
-            (dates.length > 1 ? " · " + dates.length + " dates" : "")
-        }),
-        sub.flyer
-          ? el("div", { class: "done__recapline", text: "Flyer: " + sub.flyer })
-          : el("div", { class: "done__recapline", text: "No flyer — it will list as text." })
+            (handoff.repeats
+              ? " · " + sub.repeat.charAt(0).toLowerCase() + sub.repeat.slice(1)
+              : "")
+        })
       ]),
 
       el("p", {
         class: "done__body",
-        text: "The Common First-Year office reviews submissions on weekdays. You'll get an email at " +
-          sub.email + " once it is approved, and the event appears on the calendar the moment it is."
+        text: handoff.opened
+          ? "Every answer is already filled in. Attach your flyer, check it over, and press Submit there — nothing reaches the office until you do."
+          : "Your browser blocked the new tab. Open the form with the link below: every answer is already filled in. Attach your flyer, check it over, and press Submit there."
       }),
+
       el("div", { class: "done__actions" }, [
+        /* A real link, not a scripted re-open: this one works whatever the
+           popup blocker decided. */
+        el("a", {
+          class: "btn-primary btn-primary--link",
+          href: handoff.url,
+          target: "_blank",
+          rel: "noopener",
+          text: handoff.opened ? "Open the form again" : "Open the CSU form"
+        }),
+        /* The draft is deliberately still in state. Someone who spots a wrong
+           room number on Microsoft's page can come back, fix it and hand off
+           again rather than retype the lot. */
         el("button", {
-          type: "button", class: "btn-primary", text: "Submit another",
+          type: "button", class: "btn-secondary", text: "Change something",
+          onClick: function () {
+            state.submitted = false;
+            renderSubmit();
+          }
+        }),
+        el("button", {
+          type: "button", class: "btn-secondary", text: "Start another",
           onClick: function () {
             state.submitted = false;
             state.draft = blankDraft();
@@ -1203,7 +1213,36 @@
     ]);
   }
 
-  /* Turn the draft into a submission and put it in the queue. */
+  /* Everything the Microsoft Form is asked to carry, as the strings it will
+     store. Dates go over as ISO so a column of them sorts and reads the same
+     way for everybody; the repeat rule and the time span go over as the prose
+     the office already reads in the queue. */
+  function answersFrom(d) {
+    var start = decimalFromTimeInput(d.startTime);
+    var end = decimalFromTimeInput(d.endTime);
+
+    var chosen = Object.keys(d.tags)
+      .map(function (k) { return d.tags[k]; })
+      .filter(Boolean);
+
+    return {
+      title: d.title.trim(),
+      org: d.org.trim(),
+      date: d.date,
+      time: D.spanLabel(start, end),
+      repeat: C.repeatLabel(d.repeat, d.repeat ? d.repeatUntil : null),
+      place: d.place.trim(),
+      blurb: d.blurb.trim(),
+      tags: chosen.concat(state.customTags).join(", "),
+      by: d.by.trim(),
+      email: d.email.trim()
+    };
+  }
+
+  /* Check the draft, then hand off: this page fills the office's Microsoft
+     Form and the submitter presses Submit there. Nothing is stored here and
+     nothing is claimed to have been sent — see js/msform.js for why posting
+     directly is not on offer. */
   function sendDraft() {
     var d = draft();
     state.errors = validateDraft(d);
@@ -1217,108 +1256,82 @@
       return;
     }
 
-    var start = decimalFromTimeInput(d.startTime);
-    var end = decimalFromTimeInput(d.endTime);
+    /* Guarded rather than assumed: the button is not offered while the Form is
+       unlinked, but a draft can outlive a change to CONFIG. */
+    if (!MS.configured()) { renderSubmit(); return; }
 
-    var chosen = Object.keys(d.tags)
-      .map(function (k) { return d.tags[k]; })
-      .filter(Boolean);
+    var answers = answersFrom(d);
+    var url = MS.urlFor(answers);
 
-    state.submitted = S.submit({
-      title: d.title.trim(),
-      org: d.org.trim(),
-      place: d.place.trim(),
-      blurb: d.blurb.trim(),
-      date: d.date,
-      start: start,
-      time: D.spanLabel(start, end),
-      repeat: d.repeat,
-      repeatUntil: d.repeat ? d.repeatUntil : null,
-      tags: chosen.concat(state.customTags),
-      newTags: state.customTags.filter(function (t) {
-        return S.customTags().indexOf(t) === -1;
-      }),
-      by: d.by.trim(),
-      email: d.email.trim(),
-      flyer: d.flyerName || null,
-      flyerImage: d.flyerImage
-    });
+    /* Opened from inside the click, which is what keeps a popup blocker out of
+       the way; if one intervenes anyway the done screen offers a plain link. */
+    var opened = null;
+    try {
+      opened = window.open(url, "_blank", "noopener");
+    } catch (e) { /* treated the same as a blocked window */ }
 
-    /* The draft has served its purpose; it is only held across a close so a
-       half-finished form survives, and this one is finished. */
-    state.draft = blankDraft();
-    state.customTags = [];
+    state.submitted = {
+      url: url,
+      opened: !!opened,
+      summary: answers,
+      /* The Form is told "Does not repeat" outright, but the recap only has
+         room for what is worth double-checking. */
+      repeats: !!d.repeat
+    };
+
+    /* The draft stays. Until Microsoft has the response there is nothing to
+       throw away, and someone re-reading their own answers on the Form may
+       well come back to change one. */
     state.errors = {};
     renderSubmit();
   }
 
-  /* Built as its own node because the read is asynchronous: the status line
-     has to repaint when the file lands, without disturbing the rest of the
-     form or the caret sitting in it. */
-  function flyerField(d) {
-    var status = el("div", { class: "dropzone__status" });
+  /* A file is the one answer a pre-filled link cannot carry, so the flyer is
+     attached on the Microsoft Form itself. Saying so here, next to everything
+     else the submission needs, is what stops someone arriving at that page with
+     the artwork still sitting on their desktop. */
+  function flyerField() {
+    var cfg = C.CONFIG.submitForm || {};
 
-    function paintStatus() {
-      status.hidden = !(d.flyerName || d.flyerNote);
-      fill(status, [
-        d.flyerImage
-          ? el("img", { class: "dropzone__preview", src: d.flyerImage, alt: "Flyer preview" })
-          : null,
-        el("div", {}, [
-          d.flyerName ? el("div", { class: "dropzone__file", text: d.flyerName }) : null,
-          d.flyerNote ? el("div", { class: "dropzone__note", text: d.flyerNote }) : null,
-          d.flyerName
-            ? el("button", {
-                type: "button", class: "btn-link", text: "Remove",
-                onClick: function () {
-                  d.flyerName = "";
-                  d.flyerImage = null;
-                  d.flyerNote = "";
-                  if (input.value) input.value = "";
-                  paintStatus();
-                }
-              })
-            : null
-        ])
-      ]);
-    }
-
-    var input = el("input", {
-      type: "file",
-      accept: "application/pdf,image/*",
-      onChange: function (e) {
-        var file = e.target.files && e.target.files[0];
-        d.flyerNote = file ? "Reading…" : "";
-        d.flyerName = "";
-        d.flyerImage = null;
-        paintStatus();
-
-        readFlyer(file, function (result) {
-          if (!result) { d.flyerNote = ""; paintStatus(); return; }
-          if (result.error) {
-            d.flyerName = "";
-            d.flyerImage = null;
-            d.flyerNote = result.error;
-            e.target.value = "";
-          } else {
-            d.flyerName = result.name;
-            d.flyerImage = result.image;
-            d.flyerNote = result.note;
-          }
-          paintStatus();
-        });
-      }
-    });
-
-    paintStatus();
-
-    return el("label", { class: "field" }, [
+    return el("div", { class: "field" }, [
       el("span", { class: "field__label", text: "Flyer page" }),
-      el("span", { class: "dropzone" }, [
-        el("span", { text: "One page, PDF or image. This is what students and the projector actually see, so make it readable from the back of a room." }),
-        input,
-        status
+      el("div", { class: "notice" }, [
+        el("div", {
+          class: "notice__lead",
+          text: cfg.flyerNote || "You will attach the flyer on the next step, on the CSU form."
+        }),
+        el("div", {
+          class: "notice__body",
+          text: "One page, PDF or image. This is what students and the projector actually see, so make it readable from the back of a room. Have the file to hand before you continue."
+        })
       ])
+    ]);
+  }
+
+  /* Shown only when CONFIG.submitForm is not wired up — a setup mistake made
+     once, by whoever connected the Form, and worth naming exactly rather than
+     leaving them to press Send and watch nothing happen. */
+  function unlinkedNotice() {
+    var gaps = MS.missingLabels();
+
+    return el("div", { class: "alert alert--setup", role: "alert" }, [
+      el("strong", {
+        text: MS.linked()
+          ? "This form is not fully connected to the CSU submission form yet."
+          : "This form is not connected to the CSU submission form yet."
+      }),
+      el("p", {
+        class: "alert__body",
+        text: MS.linked()
+          ? "The pre-filled link in CONFIG.submitForm is missing " +
+            (gaps.length === 1 ? "one question: " : gaps.length + " questions: ") +
+            gaps.join(", ") + ". Until it carries all of them, submissions cannot be handed off."
+          : "Nobody can submit an event until CONFIG.submitForm.prefillUrl in js/data.js holds the pre-filled link from the office's Microsoft Form. README.md has the ten questions to build and how to get that link."
+      }),
+      el("p", {
+        class: "alert__body",
+        text: "If you were trying to submit an event, email the Common First-Year office instead — they can add it by hand."
+      })
     ]);
   }
 
@@ -1400,9 +1413,12 @@
     paintTags();
 
     var errorCount = Object.keys(state.errors).length;
+    var ready = MS.configured();
 
     return el("div", { class: "submit" }, [
       el("div", { class: "submit__form" }, [
+
+        ready ? null : unlinkedNotice(),
 
         errorCount
           ? el("div", { class: "alert", role: "alert", tabindex: "-1" }, [
@@ -1487,7 +1503,7 @@
           })
         ]),
 
-        flyerField(d),
+        flyerField(),
 
         el("div", { class: "submit__who" }, [
           labelled("Your name", bound("input", "by", { type: "text", class: "input input--sm" }),
@@ -1499,7 +1515,13 @@
 
         el("div", { class: "submit__actions" }, [
           el("button", {
-            type: "button", class: "btn-primary btn-primary--lg", text: "Send for approval",
+            type: "button",
+            class: "btn-primary btn-primary--lg",
+            /* The button names what pressing it does. It does not send
+               anything — it opens the CSU form with these answers in it. */
+            text: "Continue to the CSU form",
+            disabled: ready ? null : true,
+            title: ready ? null : "The CSU submission form is not connected yet",
             onClick: sendDraft
           }),
           el("button", { type: "button", class: "btn-secondary btn-secondary--lg", text: "Cancel", onClick: closeSubmit })
@@ -1507,8 +1529,9 @@
       ]),
 
       el("aside", { class: "sidenote" }, [
-        el("div", { class: "kicker", text: "Before you send" }),
+        el("div", { class: "kicker", text: "Before you continue" }),
         el("div", { class: "sidenote__rule" }),
+        el("p", { text: "This page checks your answers, then opens the CSU submission form with all of them filled in. You attach the flyer and press Submit there." }),
         el("p", { text: "Every submission is reviewed by the First-Year team before it appears. Please allow for up to 3 business days for approval." }),
         el("p", { text: "Events without a flyer still get listed, but they show a placeholder card and are easier to scroll past." })
       ])
@@ -1605,12 +1628,46 @@
       ? "on " + D.longDayLabel(made[0].date)
       : "across " + made.length + " dates";
     afterDecision("Approved — “" + sub.title + "” is on the calendar " + where +
-      ", and " + sub.by + " has been emailed.");
+      ". Tell " + sub.by + " yourself: nothing here emails anybody.");
   }
 
   function declineCurrent(sub) {
     S.decline(sub);
-    afterDecision("Declined. " + sub.by + " has been emailed the reason.");
+    afterDecision("Declined and removed from the queue. Tell " + sub.by +
+      " yourself: nothing here emails anybody.");
+  }
+
+  /* A reply the reviewer only has to read and send. The submission is quoted
+     underneath so the submitter can see which one is being talked about
+     without the office pasting it in by hand. */
+  function feedbackMailto(sub, message) {
+    var dates = S.occurrences(sub);
+
+    var body = [
+      "Hi " + sub.by + ",",
+      "",
+      "Thanks for submitting “" + sub.title + "” to the First-Year Engineering",
+      "Calendar. Before we can put it up:",
+      "",
+      message.trim(),
+      "",
+      "Send it back through the calendar's Submit an Event form once it is sorted.",
+      "",
+      "— Common First-Year office",
+      "",
+      "-- your submission --------------------------------------------------",
+      "Event:    " + sub.title,
+      "Hosted by: " + sub.org,
+      "When:     " + D.longDayLabel(sub.date) + ", " + sub.time +
+        (dates.length > 1 ? " (" + dates.length + " dates)" : ""),
+      "Where:    " + sub.place
+    ].join("\r\n");
+
+    /* The address goes in literally: it has already been validated as a plain
+       colostate.edu address, and a percent-encoded "@" confuses some clients. */
+    return "mailto:" + sub.email.trim() +
+      "?subject=" + encodeURIComponent("Your calendar submission: " + sub.title) +
+      "&body=" + encodeURIComponent(body);
   }
 
   function reviewEmpty() {
@@ -1619,7 +1676,7 @@
       el("h3", { class: "done__title", text: "Nothing waiting on you." }),
       el("p", {
         class: "done__body",
-        text: "Every submission has been decided. New ones land here as soon as they are sent, and the submitter is emailed the moment you approve or decline."
+        text: "Every submission here has been decided. New submissions do not arrive here — they go to the Microsoft Form and land in SharePoint, where the office reads them."
       }),
       /* The last decision is the only record of what just happened, so it
          outlives the card it was made on. */
@@ -1661,12 +1718,18 @@
     var queue = S.queue();
     var dates = S.occurrences(sub);
 
+    /* This page cannot send mail, and pretending otherwise was the one claim
+       the interface made that nothing behind it honoured. Handing the reviewer
+       a composed draft in the mail client they already have open is the honest
+       version, and it is also less work than retyping the submission. */
     var sendButton = el("button", {
-      type: "button", class: "btn-primary", text: "Send feedback",
+      type: "button", class: "btn-primary", text: "Open a reply to " + sub.by,
       onClick: function () {
+        window.location.href = feedbackMailto(sub, state.feedback);
         S.noteFeedback(sub);
         state.changesOpen = false;
-        state.note = "Feedback sent to " + sub.by + " at " + sub.email + ". The submission stays in the queue.";
+        state.note = "A reply to " + sub.email + " is open in your mail client — " +
+          "it is not sent until you send it. The submission stays in the queue.";
         state.feedback = "";
         renderReview();
       }
@@ -1693,7 +1756,7 @@
       ]),
       el("div", {
         class: "feedback__to",
-        text: "Goes to " + sub.email + " with the submission attached. It stays in the queue until they resend."
+        text: "Opens a draft to " + sub.email + " in your mail client, with the submission quoted underneath. Nothing is sent until you send it, and the submission stays in the queue either way."
       }),
       el("div", { class: "feedback__actions" }, [
         sendButton,
@@ -1849,6 +1912,18 @@
           type: "button", class: "btn-brand btn-brand--ghost btn-brand--sm",
           text: "Back to calendar", onClick: closeReview
         })),
+      /* Submissions now go to Microsoft Forms, so nothing new arrives in this
+         queue — it holds the seeded examples and still publishes them onto the
+         calendar. Said once, at the top, rather than left for someone to work
+         out from an empty queue. */
+      el("div", { class: "reviewnote" }, [
+        el("strong", { text: "Submissions no longer arrive here." }),
+        " Since the submit form hands off to the office's Microsoft Form, new " +
+        "events land in SharePoint and the office reads them there. What is " +
+        "below is the seeded queue: approving still publishes onto this " +
+        "browser's calendar, which is useful for trying the flow out and not " +
+        "much else."
+      ]),
       el("div", { "data-review-body": true }, reviewBody())
     ]);
     overlays.appendChild(reviewNode);

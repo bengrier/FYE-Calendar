@@ -10,7 +10,24 @@ window.CalData = (function () {
     /* "week" or "month" — which grid the page opens on. */
     defaultView: "week",
     /* The day the calendar treats as today. */
-    today: window.CalDates.toIso(new Date())
+    today: window.CalDates.toIso(new Date()),
+
+    /* Where submissions actually go. The form on this site collects and checks
+       everything, then hands off to the office's Microsoft Form with the
+       answers filled in, so responses land in SharePoint without this page
+       needing a server or a secret.
+
+       `prefillUrl` is the "Get pre-filled URL" link from that Form, taken with
+       each question answered with its sentinel word — README.md, "Connecting
+       the Microsoft Form", lists the ten questions and their sentinels. Until
+       it is set the submit form says so plainly instead of pretending to send.
+
+       `flyerNote` is what the form tells submitters about artwork; a file
+       cannot be pre-filled, so the flyer is attached on the Form itself. */
+    submitForm: {
+      prefillUrl: "",
+      flyerNote: "You will attach the flyer on the next step, on the CSU form."
+    }
   };
 
   /* Flyer artwork. `image` is what the calendar renders; `page` is what
@@ -75,6 +92,15 @@ window.CalData = (function () {
     { id: "cookie-11", date: "2026-09-11", start: 11, time: "11:00 am – 2:00 pm", title: "Last Cookie Friday of the Year", org: "Engineering Community", place: "AV Kitchen", flyer: "cookie",
       blurb: "Same cookies, more of them. Bring anyone you met this year.", tags: ["All disciplines", "Social", "Free food"] }
   ];
+
+  /* Every event above is placeholder content, written to build and demonstrate
+     the calendar against — none of it is a real event and the dates, rooms and
+     prose are invented. Flagging the whole array in one pass rather than adding
+     a field to each literal means real events can simply be added without the
+     flag, and the page will say so precisely: while any of these are still
+     here a notice sits above the grid, and it disappears on its own once the
+     last one goes. To strip them, empty EVENTS and delete this loop. */
+  EVENTS.forEach(function (ev) { ev.temporary = true; });
 
   /* Tags submitters wrote themselves and the office has since approved — they
      are filterable for everyone and offered back in the submit form. */

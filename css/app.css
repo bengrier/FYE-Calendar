@@ -154,6 +154,9 @@ textarea:focus-visible,
 }
 .badge--today { background: var(--color-accent); color: #fff; }
 .badge--past { background: var(--ink-12); color: var(--ink-60); }
+/* Magenta rather than the teal accent: placeholder content should not look
+   like part of the furniture. */
+.badge--sample { background: var(--color-accent-2); color: #fff; }
 
 /* --- CSU header ---------------------------------------------------------- */
 
@@ -305,6 +308,15 @@ textarea:focus-visible,
 .btn-primary:hover { background: var(--color-accent-deep); border-color: var(--color-accent-deep); }
 .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn-primary--lg { font-size: 17px; padding: 13px 26px; }
+/* The handoff to the Microsoft Form is a real anchor, so it survives a popup
+   blocker; it just has to look like the primary action it is. */
+.btn-primary--link {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+  color: #fff;
+}
+.btn-primary--link:hover { color: #fff; }
 
 .btn-secondary {
   font-family: inherit;
@@ -683,6 +695,17 @@ textarea:focus-visible,
   color: var(--color-accent-deep);
 }
 
+/* Says the calendar is not real yet. Sits in the transient strip because it is
+   transient — it removes itself once the placeholder events are gone. */
+.samplenote {
+  font-family: var(--font-brand);
+  font-size: 13px;
+  color: var(--color-accent-2-deep);
+  border-left: 3px solid var(--color-accent-2);
+  padding-left: 8px;
+  margin-right: auto;
+}
+
 .btn-quiet:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -776,7 +799,27 @@ textarea:focus-visible,
 .eventcard.is-past { opacity: 0.55; }
 .eventcard.is-past:hover { opacity: 1; }
 .eventcard.is-past .eventcard__time { color: var(--ink-55); }
-.eventcard__thumb { display: block; height: 96px; background: var(--color-bg); overflow: hidden; }
+.eventcard__thumb {
+  display: block;
+  height: 96px;
+  background: var(--color-bg);
+  overflow: hidden;
+  position: relative;
+}
+/* Small enough not to fight the flyer, present on every tile so the marking is
+   not something you have to open the event to discover. */
+.eventcard__sample {
+  position: absolute;
+  top: 0;
+  left: 0;
+  font-family: var(--font-brand);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  background: var(--color-accent-2);
+  color: #fff;
+}
 .eventcard__body { display: block; padding: 10px 11px 12px; }
 .eventcard__time {
   display: block;
@@ -978,6 +1021,15 @@ textarea:focus-visible,
 }
 .alert__list { margin: 8px 0 0; padding-left: 20px; }
 .alert__list li { margin-top: 4px; }
+.alert__body { margin: 8px 0 0; font-size: 16px; line-height: 1.5; }
+
+/* A misconfiguration, not a mistake the person reading it made — stated in ink
+   rather than in the magenta reserved for "you need to fix this field". */
+.alert--setup {
+  border-left-color: var(--ink-45);
+  background: var(--ink-03);
+  color: var(--color-text);
+}
 
 .field--error .input,
 .field--error .select { border-color: var(--color-accent-2); }
@@ -1073,38 +1125,35 @@ textarea.input { font-size: 17px; line-height: 1.5; resize: vertical; }
 }
 .tagchip__remove:hover { color: var(--color-accent-2-deep); }
 
-.dropzone {
+/* Where the flyer upload used to be. It reads as a panel rather than a
+   sentence because it is an instruction about the next screen, and someone who
+   skims past it arrives there without the file. */
+.notice {
   border: 1px dashed var(--ink-35);
   background: #fff;
   border-radius: var(--radius-md);
   padding: 22px 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
 }
-.dropzone > span { font-size: 17px; }
-.dropzone input[type="file"] { font-family: inherit; font-size: 15px; }
-.dropzone__status {
-  display: flex;
-  gap: 14px;
-  align-items: flex-start;
-  padding-top: 12px;
-  border-top: 1px solid var(--ink-10);
-}
-.dropzone__preview {
-  width: 92px;
-  flex: none;
-  border: 1px solid var(--ink-12);
-  object-fit: cover;
-}
-.dropzone__file { font-size: 16px; font-weight: 600; word-break: break-all; }
-.dropzone__note { font-size: 15px; color: var(--ink-60); margin: 2px 0 6px; }
+.notice__lead { font-size: 17px; font-weight: 600; }
+.notice__body { font-size: 16px; color: var(--ink-65); margin-top: 8px; line-height: 1.5; }
 
 .sidenote { padding-top: 4px; }
 .sidenote__rule { height: 1px; background: var(--ink-20); margin: 12px 0 18px; }
 .sidenote p { font-size: 17px; line-height: 1.55; margin: 0 0 16px; text-wrap: pretty; }
 
 /* --- review queue -------------------------------------------------------- */
+
+/* Sits above the queue, in the same gutter the queue uses, so it reads as a
+   standing fact about this screen rather than as a passing alert. */
+.reviewnote {
+  margin: 28px 40px 0;
+  padding: 14px 18px;
+  background: var(--ink-03);
+  border-left: 3px solid var(--ink-45);
+  font-size: 16px;
+  line-height: 1.5;
+  max-width: 68em;
+}
 
 .review {
   padding: 34px 40px 80px;
@@ -1394,6 +1443,7 @@ textarea.input { font-size: 17px; line-height: 1.5; resize: vertical; }
   .toolbar__range { font-size: 24px; }
   .submit,
   .review { padding-left: 18px; padding-right: 18px; }
+  .reviewnote { margin-left: 18px; margin-right: 18px; }
   .week__grid { grid-template-columns: minmax(0, 1fr); }
   .submit__times,
   .submit__who { grid-template-columns: minmax(0, 1fr); }
