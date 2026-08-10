@@ -91,15 +91,19 @@
     draft: null,
     errors: {},
     customTags: [],
+    /* The chosen file is held here rather than in the input, so a rebuild of
+       the form does not lose it. It is uploaded on submit, not on choosing. */
+    flyerFile: null,
+    flyerError: null,
+    sending: false,
+    sendError: null,
 
     // review queue
     reviewSel: 0,
-    /* Set when a submission link would not decode, so the queue can say so
-       instead of opening on an unexplained empty list. */
-    linkError: false,
     approvedNew: [],
     changesOpen: false,
     feedback: "",
+    deciding: false,
     note: ""
   };
 
@@ -407,8 +411,6 @@
     var raw = location.hash || "";
     var lower = raw.toLowerCase();
     var event = /^#event\/(.+)$/i.exec(raw);
-    /* Case-sensitive: the payload is base64url and "A" is not "a". */
-    var submission = /^#review\/(.+)$/.exec(raw);
 
     applyingRoute = true;
     state.detailId = null;
@@ -416,9 +418,7 @@
     state.reviewOpen = false;
     state.slideshow = false;
 
-    if (submission) {
-      takeSubmissionLink(submission[1]);
-    } else if (event) {
+    if (event) {
       var id = decodeURIComponent(event[1]);
       var found = S.eventById(id);
       if (found) {
@@ -431,6 +431,7 @@
     } else if (lower === "#review") {
       state.reviewOpen = true;
       state.note = "";
+      refreshQueue();
     } else if (lower === "#submit") {
       state.submitOpen = true;
     } else if (lower === "#slideshow") {
@@ -441,48 +442,6 @@
 
     applyingRoute = false;
     render();
-  }
-
-  /* A submission link, opened. The payload becomes a card in this browser's
-     queue and the reviewer carries on as normal.
-
-     Opening the same link twice — forwarded mail, a second reviewer's reply,
-     a bookmarked tab reloaded — must not queue the same event twice, so the
-     payload itself is the identity. It is the only thing here that is
-     genuinely unique per submission, and it is stable across reloads in a way
-     a generated id would not be. */
-  function takeSubmissionLink(payload) {
-    var sub = SUB.decode(payload);
-
-    /* The payload has been read; drop it from the URL. Otherwise a reload
-       re-runs this, Back walks into it again, and the reviewer is looking at
-       900 characters of base64 in their address bar. replaceState does not
-       fire hashchange, so this cannot re-enter. */
-    try {
-      history.replaceState({ fye: true }, "",
-        location.pathname + location.search + "#review");
-    } catch (e) { /* the URL stays long; nothing else breaks */ }
-
-    if (!sub) {
-      state.reviewOpen = true;
-      state.linkError = true;
-      return;
-    }
-
-    state.reviewOpen = true;
-    state.linkError = false;
-
-    var existing = S.queue().filter(function (q) { return q.payload === payload; })[0];
-    if (existing) {
-      state.reviewSel = S.queue().indexOf(existing);
-      state.note = "Already in the queue — this link had been opened before.";
-      return;
-    }
-
-    sub.payload = payload;
-    var made = S.submit(sub);
-    state.reviewSel = S.queue().indexOf(made);
-    state.note = "";
   }
 
   function openDetail(id) {
@@ -564,6 +523,19 @@
   /* What the stage shows when the week or month holds nothing: why it is empty,
      and a way forward when there is still something later on the calendar. */
   function emptyStageNode() {
+    /* Before the calendar has loaded, "nothing scheduled this week" is a claim
+       we are in no position to make. The load state below the toolbar says what
+       actually happened; this just stops contradicting it. */
+    var st = S.state();
+    if (!st.loaded) {
+      return el("div", { class: "stage-empty" }, [
+        el("div", {
+          class: "stage-empty__line",
+          text: st.error ? "The calendar has not loaded." : "Loading…"
+        })
+      ]);
+    }
+
     var narrowed = anyNarrowing();
     var upcoming = nextUpcoming();
     var elsewhere = narrowed ? matchesEverywhere().length : 0;
@@ -609,10 +581,16 @@
        has to name everything the empty message reads — the anchor and the
        query included, or stepping between two empty weeks leaves the previous
        week's "Next event" date sitting on the stage. */
+    var st = S.state();
     var key = cur
       ? cur.id
       : ["empty", state.view, state.anchor, state.query,
-         JSON.stringify(state.selected)].join("~");
+         JSON.stringify(state.selected),
+         /* The empty stage now also depends on whether the calendar has
+            loaded, so leaving these out strands it on "Loading…" after the
+            fetch fails — the same way leaving the anchor out once stranded it
+            on the previous week's date. */
+         st.loaded, !!st.error].join("~");
     if (node.dataset.event === key) return;
     node.dataset.event = key;
     fill(node, cur ? flyerNode(cur, "stage") : emptyStageNode());
@@ -786,9 +764,64 @@
 
     /* Only offered once the visitor has actually changed something — for
        everyone else it is a button that undoes nothing. */
-    one('[data-action="reset-store"]').hidden = !S.isDirty();
     paintSampleNote();
+    paintLoadState();
     syncSubRow();
+  }
+
+  /* The calendar comes from a server now, so "nothing here" has three meanings
+     it never had before: still arriving, failed to arrive, and genuinely empty.
+     Saying which is the difference between someone waiting a moment and someone
+     concluding the calendar is broken. */
+  function paintLoadState() {
+    var node = one("#loadstate");
+    var st = S.state();
+
+    if (st.error && !st.loaded) {
+      node.hidden = false;
+      node.className = "loadstate loadstate--bad";
+      fill(node, [
+        el("strong", { text: "The calendar could not be loaded." }),
+        " " + errorText(st.error) + " ",
+        el("button", {
+          type: "button", class: "btn-link", text: "Try again",
+          onClick: function () { S.hydrate(state.reviewOpen, true).catch(function () {}); }
+        })
+      ]);
+      return;
+    }
+
+    if (st.error && st.loaded) {
+      /* Something already on screen and a refresh that failed: what is shown is
+         real, just possibly a few minutes old. Saying so is more use than
+         replacing a working calendar with an error. */
+      node.hidden = false;
+      node.className = "loadstate loadstate--stale";
+      fill(node, [
+        "Showing the last version that loaded — " + errorText(st.error) + " ",
+        el("button", {
+          type: "button", class: "btn-link", text: "Try again",
+          onClick: function () { S.hydrate(state.reviewOpen, true).catch(function () {}); }
+        })
+      ]);
+      return;
+    }
+
+    if (!st.loaded && st.loading) {
+      node.hidden = false;
+      node.className = "loadstate";
+      fill(node, "Loading the calendar…");
+      return;
+    }
+
+    node.hidden = true;
+  }
+
+  function errorText(err) {
+    if (err && err.status === 401) return "You are not signed in.";
+    if (err && err.status === 403) return "That account cannot see this.";
+    if (err && err.status >= 500) return "The server had a problem.";
+    return "Check your connection.";
   }
 
   /* The seeded events are placeholder content, and the calendar says so rather
@@ -850,6 +883,7 @@
   /* A day with nothing in it means two different things, and saying the wrong
      one sends people looking for events that were only ever filtered out. */
   function emptyDayText() {
+    if (!S.state().loaded) return "";
     return anyNarrowing() ? "No matches" : "Nothing scheduled";
   }
 
@@ -1198,34 +1232,17 @@
     return node;
   }
 
-  /* Sending is the submitter's own act, not something this page did on their
-     behalf, and the screen says so. It has composed an email and it knows
-     nothing beyond that — so the one instruction it gives is the one that
-     matters: attach the flyer and press send. */
+  /* It really was submitted this time. The database has it, and the only
+     honest thing left to say is what was recorded and what happens next. */
   function submitDone() {
-    var handoff = state.submitted;
-    var sub = handoff.summary;
-    var to = SUB.office().email;
-
-    var linkBox = el("input", {
-      type: "text",
-      class: "input input--link",
-      readonly: true,
-      value: handoff.link,
-      onClick: function (e) { e.target.select(); }
-    });
+    var sub = state.submitted;
 
     return el("div", { class: "done" }, [
-      el("div", { class: "done__kicker", text: "One step left" }),
-      el("h3", {
-        class: "done__title",
-        text: handoff.opened
-          ? "Almost there — send the email."
-          : "Almost there — send this to the office."
-      }),
+      el("div", { class: "done__kicker", text: "Received" }),
+      el("h3", { class: "done__title", text: "Your event is with the office." }),
 
       /* Reading the submission back is the only confirmation there is that the
-         right thing was captured — worth more here than another line of
+         right thing was recorded — worth more here than another line of
          reassurance. */
       el("div", { class: "done__recap" }, [
         el("div", { class: "done__recaptitle", text: sub.title }),
@@ -1235,57 +1252,28 @@
           /* Only the first letter drops: the rest of the label carries a month
              name, and "until dec 8" reads like a typo. */
           text: D.longDayLabel(sub.date) + ", " + sub.time +
-            (handoff.repeats
+            (sub.repeats
               ? " · " + sub.repeat.charAt(0).toLowerCase() + sub.repeat.slice(1)
               : "")
+        }),
+        el("div", {
+          class: "done__recapline",
+          text: sub.flyerName
+            ? "Flyer: " + sub.flyerName
+            : "No flyer — it will list as a text card."
         })
       ]),
 
       el("p", {
         class: "done__body",
-        text: handoff.opened
-          ? "A draft is open in your mail client with everything above already in it. Attach your flyer and press send — your submission does not reach the office until you do."
-          : to
-            ? "Your mail client did not open. Email the link below to " + to +
-              ", with your flyer attached. Everything above travels in the link, so there is nothing to retype."
-            : "Email the link below to the First-Year office, with your flyer attached. Everything above travels in the link, so there is nothing to retype."
+        text: "The First-Year team reads submissions on weekdays; please allow up to " +
+          "3 business days. They will reply to " + sub.email +
+          " — nothing here sends mail, so that reply comes from a person."
       }),
 
-      el("div", { class: "done__linkrow" }, [
-        el("span", { class: "field__label", text: "Your submission link" }),
-        linkBox,
-        el("button", {
-          type: "button", class: "btn-secondary", text: "Copy",
-          onClick: function (e) {
-            linkBox.select();
-            copyText(handoff.link, e.target, "Copy");
-          }
-        })
-      ]),
-
       el("div", { class: "done__actions" }, [
-        /* A real link, so it survives whatever the mail handler did. Absent
-           entirely when there is no address to write to — a button that opens
-           mail to nobody is worse than no button. */
-        handoff.mailto
-          ? el("a", {
-              class: "btn-primary btn-primary--link",
-              href: handoff.mailto,
-              text: handoff.opened ? "Open the email again" : "Open the email"
-            })
-          : null,
-        /* The draft is deliberately still in state. Someone who spots a wrong
-           room number while writing the email can come back, fix it and
-           regenerate rather than retype the lot. */
         el("button", {
-          type: "button", class: "btn-secondary", text: "Change something",
-          onClick: function () {
-            state.submitted = false;
-            renderSubmit();
-          }
-        }),
-        el("button", {
-          type: "button", class: "btn-secondary", text: "Start another",
+          type: "button", class: "btn-primary", text: "Submit another",
           onClick: function () {
             state.submitted = false;
             state.draft = blankDraft();
@@ -1329,10 +1317,14 @@
     };
   }
 
-  /* Check the draft, then encode it into a link and compose the email that
-     carries it. Nothing is stored here and nothing is claimed to have been
-     sent — the submitter presses send, and the flyer goes with it as an
-     attachment. See js/submission.js. */
+  /* Check the draft, upload the flyer if there is one, then post the
+     submission. Two requests rather than one: a 10 MB file should not be
+     re-sent because a validation message bounced the submitter back to the
+     form, so the upload happens once and the submission references its key.
+
+     The server re-checks everything this checked. These checks exist to tell
+     someone what is wrong while they are still looking at the field; they run
+     in a browser the submitter controls, so they prove nothing. */
   function sendDraft() {
     var d = draft();
     state.errors = validateDraft(d);
@@ -1340,94 +1332,139 @@
     if (Object.keys(state.errors).length) {
       renderSubmit();
       /* Send focus to the first thing that needs fixing, rather than leaving
-         the caret wherever the Send button was. */
+         the caret wherever the Submit button was. */
       var firstBad = one(".field--error .input, .field--error select", submitNode);
       if (firstBad) firstBad.focus();
       return;
     }
 
-    var sub = submissionFrom(d);
-    var link = SUB.linkFor(sub);
-
-    /* A missing office address must not be a dead end. The submission is real
-       either way — it is the link — so without an address to open mail to, the
-       confirmation hands over the link and says who to send it to. Refusing to
-       submit at all was the wrong call: it left someone who had filled in the
-       whole form with nothing to show for it. */
-    var mailto = SUB.configured() ? SUB.mailtoFor(sub, link) : null;
-
-    /* Assigning location.href is what hands a mailto: to the OS. There is no
-       way to learn whether a mail client actually opened, so this is reported
-       as "a draft is open" only when the assignment itself did not throw —
-       and the link is on screen either way. */
-    var opened = false;
-    if (mailto) {
-      try {
-        window.location.href = mailto;
-        opened = true;
-      } catch (e) { /* no mail handler; the copyable link is the fallback */ }
-    }
-
-    state.submitted = {
-      link: link,
-      mailto: mailto,
-      opened: opened,
-      summary: {
-        title: sub.title,
-        org: sub.org,
-        place: sub.place,
-        date: sub.date,
-        time: sub.time,
-        repeat: C.repeatLabel(sub.repeat, sub.repeatUntil)
-      },
-      /* The recap only has room for what is worth double-checking. */
-      repeats: !!d.repeat
-    };
-
-    /* The draft stays. Until the email is actually sent there is nothing to
-       throw away, and someone re-reading their own answers in the draft may
-       well come back to change one. */
-    state.errors = {};
+    if (state.sending) return;
+    state.sending = true;
+    state.sendError = null;
     renderSubmit();
+
+    var sub = submissionFrom(d);
+    var file = state.flyerFile;
+
+    var uploaded = file
+      ? S.uploadFlyer(file).then(function (key) { sub.flyerKey = key; })
+      : Promise.resolve();
+
+    uploaded
+      .then(function () { return S.submit(sub); })
+      .then(function () {
+        state.submitted = {
+          title: sub.title,
+          org: sub.org,
+          place: sub.place,
+          date: sub.date,
+          time: sub.time,
+          email: sub.email,
+          repeat: C.repeatLabel(sub.repeat, sub.repeatUntil),
+          repeats: !!d.repeat,
+          flyerName: file ? file.name : null
+        };
+        /* Sent and accepted, so the draft has served its purpose. */
+        state.draft = blankDraft();
+        state.customTags = [];
+        state.flyerFile = null;
+        state.errors = {};
+      })
+      .catch(function (err) {
+        /* Nothing is cleared. Whatever went wrong, the answers are still on
+           screen and pressing the button again is a reasonable thing to do.
+           A field-specific refusal from the server is shown against that field
+           the same way the local checks are. */
+        if (err && err.field) {
+          state.errors = {};
+          state.errors[err.field] = err.message;
+        } else {
+          state.sendError = (err && err.message) || "That could not be sent.";
+        }
+      })
+      .then(function () {
+        state.sending = false;
+        renderSubmit();
+      });
   }
 
-  /* A file is the one thing a link cannot carry, so the flyer rides on the
-     email as an attachment. Saying so here, next to everything else the
-     submission needs, is what stops someone sending the mail and only then
-     noticing the artwork is still on their desktop. */
+  /* The flyer upload, back where it belongs now that there is somewhere to put
+     a file. Its own node because the chosen file has to repaint without
+     disturbing the caret in the rest of the form. */
   function flyerField() {
-    return el("div", { class: "field" }, [
+    var status = el("div", { class: "dropzone__status" });
+
+    function paint() {
+      var file = state.flyerFile;
+      status.hidden = !file && !state.flyerError;
+      fill(status, [
+        file ? el("div", { class: "dropzone__file", text: file.name }) : null,
+        file
+          ? el("div", {
+              class: "dropzone__note",
+              text: Math.max(1, Math.round(file.size / 1024)) + " KB — uploaded when you submit."
+            })
+          : null,
+        state.flyerError
+          ? el("div", { class: "dropzone__note dropzone__note--bad", text: state.flyerError })
+          : null,
+        file
+          ? el("button", {
+              type: "button", class: "btn-link", text: "Remove",
+              onClick: function () {
+                state.flyerFile = null;
+                state.flyerError = null;
+                input.value = "";
+                paint();
+              }
+            })
+          : null
+      ]);
+    }
+
+    var input = el("input", {
+      type: "file",
+      accept: "application/pdf,image/*",
+      onChange: function (e) {
+        var file = e.target.files && e.target.files[0];
+        state.flyerError = null;
+
+        /* Checked here only so someone is told immediately rather than after
+           uploading 30 MB. The server checks the bytes themselves, which is
+           the check that decides. */
+        if (file && file.size > 10 * 1024 * 1024) {
+          state.flyerError = "That file is over 10 MB. Export it smaller and try again.";
+          state.flyerFile = null;
+          e.target.value = "";
+        } else {
+          state.flyerFile = file || null;
+        }
+        paint();
+      }
+    });
+
+    paint();
+
+    return el("label", { class: "field" }, [
       el("span", { class: "field__label", text: "Flyer page" }),
-      el("div", { class: "notice" }, [
-        el("div", {
-          class: "notice__lead",
-          text: "There is no upload here — attach the flyer to the email instead."
-        }),
-        el("div", {
-          class: "notice__body",
-          text: "Pressing Submit opens an email to the office with everything on this page already in it. Attach your flyer to that email before sending, and it arrives with the rest."
-        }),
-        el("div", {
-          class: "notice__body",
-          text: "One page, PDF or image. This is what students and the projector actually see, so make it readable from the back of a room. Events without one still get listed, as a text card."
-        })
+      el("span", { class: "dropzone" }, [
+        el("span", { text: "One page, PDF or image, up to 10 MB. This is what students and the projector actually see, so make it readable from the back of a room. Events without one still get listed, as a text card." }),
+        input,
+        status
       ])
     ]);
   }
 
-  /* Shown only when CONFIG.office.email is unset — a setup mistake made once,
-     by whoever put this up, and worth naming exactly rather than leaving
-     someone to press the button and watch mail open to nobody. */
-  function unlinkedNotice() {
-    return el("div", { class: "alert alert--setup", role: "alert" }, [
-      el("strong", { text: "No office address is set, so this cannot open your mail for you." }),
+  /* Whatever stopped the submission going through. Distinct from a field
+     error: nothing here is the submitter's to fix, so it says what happened
+     and leaves everything they typed exactly where it was. */
+  function sendErrorNotice() {
+    return el("div", { class: "alert", role: "alert", tabindex: "-1" }, [
+      el("strong", { text: "That could not be sent." }),
+      el("p", { class: "alert__body", text: state.sendError }),
       el("p", {
         class: "alert__body",
-        text: "You can still submit: you will be given a link to email to the First-Year office yourself, with your flyer attached."
-      }),
-      el("p", {
-        class: "alert__body",
-        text: "Whoever runs this site: set CONFIG.office.email in js/data.js. README.md says where."
+        text: "Nothing you typed has been lost. Try again in a moment, and if it keeps failing, email the First-Year office instead."
       })
     ]);
   }
@@ -1510,12 +1547,11 @@
     paintTags();
 
     var errorCount = Object.keys(state.errors).length;
-    var ready = SUB.configured();
 
     return el("div", { class: "submit" }, [
       el("div", { class: "submit__form" }, [
 
-        ready ? null : unlinkedNotice(),
+        state.sendError ? sendErrorNotice() : null,
 
         errorCount
           ? el("div", { class: "alert", role: "alert", tabindex: "-1" }, [
@@ -1614,26 +1650,25 @@
           el("button", {
             type: "button",
             class: "btn-primary btn-primary--lg",
-            text: "Submit",
+            /* Named for what is happening while it is happening: a flyer takes
+               a moment to upload, and a button that looks idle invites a second
+               press. */
+            text: state.sending ? "Sending…" : "Submit",
+            disabled: state.sending ? true : null,
             onClick: sendDraft
           }),
-          el("button", { type: "button", class: "btn-secondary btn-secondary--lg", text: "Cancel", onClick: closeSubmit }),
-          /* The last thing read before pressing the button, because the flyer
-             is the one part of the submission this page cannot carry for you
-             and the one people will otherwise forget. */
-          ready
-            ? el("div", {
-                class: "submit__hint",
-                text: "Submitting opens an email to the office. Attach your flyer to it before you send."
-              })
-            : null
+          el("button", {
+            type: "button", class: "btn-secondary btn-secondary--lg", text: "Cancel",
+            disabled: state.sending ? true : null,
+            onClick: closeSubmit
+          })
         ])
       ]),
 
       el("aside", { class: "sidenote" }, [
-        el("div", { class: "kicker", text: "Before you send" }),
+        el("div", { class: "kicker", text: "Before you submit" }),
         el("div", { class: "sidenote__rule" }),
-        el("p", { text: "Everything you type here travels inside a link, so the office has nothing to retype. Submitting opens an email carrying that link — you attach the flyer and press send." }),
+        el("p", { text: "Pressing Submit sends this straight to the First-Year office, flyer and all. Nothing else is needed from you." }),
         el("p", { text: "Every submission is reviewed by the First-Year team before it appears. Please allow for up to 3 business days for approval." }),
         el("p", { text: "Events without a flyer still get listed, but they show a placeholder card and are easier to scroll past." })
       ])
@@ -1706,15 +1741,27 @@
      Review queue
      ====================================================================== */
 
+  /* "2 days ago" reads better than a date on a queue you work through daily,
+     and the exact timestamp is one hover away. */
+  function whenSubmitted(ms) {
+    if (!ms) return "recently";
+    var days = Math.floor((Date.now() - ms) / 86400000);
+    if (days <= 0) return "today";
+    if (days === 1) return "yesterday";
+    if (days < 14) return days + " days ago";
+    return D.shortDayLabel(D.toIso(new Date(ms)));
+  }
+
   function currentSubmission() {
     var queue = S.queue();
     var i = Math.min(state.reviewSel, Math.max(0, queue.length - 1));
     return queue[i] || null;
   }
 
-  /* After a decision the queue is one shorter, so the selection has to be
-     pulled back inside it, and the whole page — not just this overlay —
-     rerendered: an approval has just put events on the calendar behind. */
+  /* After a decision the store has re-hydrated, so the queue is one shorter and
+     the selection has to be pulled back inside it. The whole page is
+     rerendered, not just this overlay: an approval has just put events on the
+     calendar behind it. */
   function afterDecision(note) {
     state.reviewSel = Math.min(state.reviewSel, Math.max(0, S.queue().length - 1));
     state.changesOpen = false;
@@ -1724,20 +1771,48 @@
     render();
   }
 
+  /* Decisions now go to a server, so they can fail — a lost connection, or the
+     other reviewer having just decided the same card. Both are reported rather
+     than swallowed, and the card stays put until the server has agreed. */
+  function decide(work, done) {
+    if (state.deciding) return;
+    state.deciding = true;
+    state.note = "";
+    renderReview();
+
+    work()
+      .then(function (result) { afterDecision(done(result)); })
+      .catch(function (err) {
+        state.note = (err && err.message) || "That could not be saved.";
+        render();
+      })
+      .then(function () {
+        state.deciding = false;
+        renderReview();
+      });
+  }
+
   function approveCurrent(sub) {
-    var made = S.approve(sub, state.approvedNew);
-    var where = made.length === 1
-      ? "on " + D.longDayLabel(made[0].date)
-      : "across " + made.length + " dates";
-    afterDecision("Approved — “" + sub.title + "” is on this browser's calendar " +
-      where + ". Download events.js above to publish it, and tell " + sub.by +
-      " yourself: nothing here emails anybody.");
+    decide(
+      function () { return S.approve(sub.id, state.approvedNew); },
+      function (result) {
+        var where = result.published === 1
+          ? "on " + D.longDayLabel(result.dates[0])
+          : "across " + result.published + " dates";
+        return "Approved — “" + sub.title + "” is on the calendar " + where +
+          ". Tell " + sub.by + " yourself: nothing here emails anybody.";
+      }
+    );
   }
 
   function declineCurrent(sub) {
-    S.decline(sub);
-    afterDecision("Declined and removed from the queue. Tell " + sub.by +
-      " yourself: nothing here emails anybody.");
+    decide(
+      function () { return S.decline(sub.id); },
+      function () {
+        return "Declined and removed from the queue. Tell " + sub.by +
+          " yourself: nothing here emails anybody.";
+      }
+    );
   }
 
   /* A reply the reviewer only has to read and send. The submission is quoted
@@ -1773,143 +1848,13 @@
       "&body=" + encodeURIComponent(body);
   }
 
-  /* ----------------------------------------------------------------------
-     Publishing
-
-     The last step of the workflow, and the only one that leaves this page:
-     approving puts an event on this browser's calendar, and publishing means
-     getting it into the repository. Rather than ask a colleague to hand-edit
-     JavaScript — where a missing comma is a blank calendar and no error
-     message — the queue writes the whole of js/events.js and hands it over as
-     a download. Publishing is then dropping one file into GitHub.
-
-     The serialiser below has to keep producing what scripts/extract-events.js
-     produced, or every publish reformats the file and the diff becomes
-     unreadable. One property per line, in a fixed order, is chosen for exactly
-     that: a new event is a clean block of added lines in the GitHub diff a
-     reviewer looks at before committing.
-     ---------------------------------------------------------------------- */
-
-  var EVENT_KEYS = ["id", "date", "start", "time", "title", "org", "place",
-                    "flyer", "blurb", "tags", "temporary"];
-
-  function jsLiteral(v) {
-    if (v === null || v === undefined) return "null";
-    if (typeof v === "number" || typeof v === "boolean") return String(v);
-    if (Array.isArray(v)) return "[" + v.map(jsLiteral).join(", ") + "]";
-    return JSON.stringify(String(v));
-  }
-
-  var EVENTS_HEADER = [
-    "/* Every event on the calendar.",
-    "",
-    "   This file holds nothing but the list, and the review queue regenerates it",
-    "   whole: approve a submission, press \"Download events.js\", and drop the result",
-    "   in here. That is the entire publishing step — there is no other file to",
-    "   touch and no syntax to get right by hand.",
-    "",
-    "   `temporary: true` marks placeholder content written to build against. Those",
-    "   entries carry a Sample label on the calendar and a line above the grid says",
-    "   so; delete them and the notice removes itself. Real events do not carry the",
-    "   flag.",
-    "",
-    "   `start` is the start hour as a decimal (17.5 = 5:30 pm) and is used only for",
-    "   ordering within a day and for the morning/afternoon/evening tag. `flyer` is",
-    "   a key into FLYERS in data.js, or null. */",
-    "window.CalEvents = ["
-  ].join("\n");
-
-  function eventsFileText() {
-    var body = S.events().map(function (ev) {
-      var lines = EVENT_KEYS
-        .filter(function (k) { return !(k === "temporary" && !ev.temporary); })
-        .map(function (k) { return "    " + k + ": " + jsLiteral(ev[k]); });
-      return "  {\n" + lines.join(",\n") + "\n  }";
-    }).join(",\n");
-
-    return EVENTS_HEADER + "\n" + body + "\n];\n";
-  }
-
-  function downloadEventsFile() {
-    var blob = new window.Blob([eventsFileText()], {
-      type: "text/javascript;charset=utf-8"
-    });
-    var url = window.URL.createObjectURL(blob);
-    var a = el("a", { href: url, download: "events.js" });
-
-    /* Must be in the document for the click to count in some browsers, and
-       the object URL is released on the next turn rather than immediately —
-       revoking synchronously can cancel the download that just started. */
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.setTimeout(function () { window.URL.revokeObjectURL(url); }, 0);
-  }
-
-  /* Only once something has actually been approved. A queue with unreviewed
-     submissions in it makes the store dirty without changing a single event,
-     and a bar reading "0 approved events are not published yet" above an
-     untouched calendar is worse than no bar at all. */
-  function publishBar() {
-    var all = S.events();
-    var added = all.filter(function (ev) { return ev.fromSubmission; }).length;
-    if (!added) return null;
-
-    return el("div", { class: "publish" }, [
-      el("div", { class: "publish__text" }, [
-        el("strong", {
-          text: added === 1
-            ? "1 approved event is not published yet."
-            : added + " approved events are not published yet."
-        }),
-        " They are on this browser's calendar only. Download the file and put " +
-        "it in the repository to put them on the live site."
-      ]),
-      el("button", {
-        type: "button", class: "btn-primary", text: "Download events.js",
-        onClick: function () {
-          downloadEventsFile();
-          state.note = "events.js downloaded — " + all.length +
-            " events. Replace js/events.js in the repository with it.";
-          renderReview();
-        }
-      })
-    ]);
-  }
-
-  /* Links get mangled: wrapped by a mail client, truncated by a chat window,
-     copied without their tail. The distinction that matters to the reviewer is
-     between "this link is broken" and "there is nothing here", so they know to
-     ask for it again rather than assume the submitter never sent it. */
-  function badLinkNotice() {
-    return el("div", { class: "done" }, [
-      el("div", { class: "done__kicker", text: "Unreadable link" }),
-      el("h3", { class: "done__title", text: "That submission link did not open." }),
-      el("p", {
-        class: "done__body",
-        text: "Most often the link was cut short on its way here — mail clients and chat windows both wrap long URLs, and only part of it arrived. Ask for it again, pasted as a link rather than typed, or have the submitter use Copy on the confirmation screen."
-      }),
-      el("p", {
-        class: "done__body",
-        text: "Nothing has been lost: submissions are only read from links, never stored anywhere in between, so the submitter still has theirs."
-      }),
-      el("div", { class: "done__actions" }, [
-        el("button", {
-          type: "button", class: "btn-primary", text: "Go to the queue",
-          onClick: function () { state.linkError = false; renderReview(); }
-        }),
-        el("button", { type: "button", class: "btn-secondary", text: "Back to calendar", onClick: closeReview })
-      ])
-    ]);
-  }
-
   function reviewEmpty() {
     return el("div", { class: "done" }, [
       el("div", { class: "done__kicker", text: "Queue clear" }),
       el("h3", { class: "done__title", text: "Nothing waiting on you." }),
       el("p", {
         class: "done__body",
-        text: "Every submission here has been decided. New ones arrive by opening the link a submitter emails you — there is nothing to poll and nothing to log in to."
+        text: "Every submission has been decided. New ones appear here on their own as students send them in — this screen refreshes each time you open it."
       }),
       /* The last decision is the only record of what just happened, so it
          outlives the card it was made on. */
@@ -1945,10 +1890,6 @@
   }
 
   function reviewBody() {
-    /* Before the empty check: a link that would not decode has to say so even
-       when — especially when — there is nothing else in the queue. */
-    if (state.linkError) return badLinkNotice();
-
     var sub = currentSubmission();
     if (!sub) return reviewEmpty();
 
@@ -1962,13 +1903,22 @@
     var sendButton = el("button", {
       type: "button", class: "btn-primary", text: "Open a reply to " + sub.by,
       onClick: function () {
-        window.location.href = feedbackMailto(sub, state.feedback);
-        S.noteFeedback(sub);
-        state.changesOpen = false;
-        state.note = "A reply to " + sub.email + " is open in your mail client — " +
-          "it is not sent until you send it. The submission stays in the queue.";
-        state.feedback = "";
-        renderReview();
+        var mailto = feedbackMailto(sub, state.feedback);
+        /* Flagged first, opened second. If the flag fails the reviewer should
+           know before their mail client steals the window. */
+        S.noteFeedback(sub.id)
+          .then(function () {
+            window.location.href = mailto;
+            state.changesOpen = false;
+            state.note = "A reply to " + sub.email + " is open in your mail client — " +
+              "it is not sent until you send it. The submission stays in the queue, " +
+              "marked as waiting on them.";
+            state.feedback = "";
+          })
+          .catch(function (err) {
+            state.note = (err && err.message) || "That could not be recorded.";
+          })
+          .then(renderReview);
       }
     });
     sendButton.disabled = state.feedback.trim().length === 0;
@@ -2027,7 +1977,7 @@
             el("span", { class: "queue__title", text: p.title }),
             el("span", { class: "queue__org", text: p.org }),
             el("span", { class: "queue__sent" }, [
-              "Sent " + p.submitted,
+              "Sent " + whenSubmitted(p.submittedAt),
               p.awaiting ? el("span", { class: "queue__flag", text: " · changes requested" }) : null
             ])
           ]);
@@ -2057,15 +2007,16 @@
 
           el("div", { class: "sub__block" }, [
             el("div", { class: "field__label", text: "Tags on the submission" }),
-            el("div", { class: "sub__chips" }, (sub.tags || []).map(function (t) {
+            el("div", { class: "sub__chips" }, S.submissionTags(sub.id).map(function (t) {
               return el("span", { class: "chip chip--lg", text: t });
             }))
           ]),
 
-          (sub.newTags || []).length
+          S.submissionNewTags(sub.id).length
             ? el("div", { class: "sub__block sub__block--new" }, [
                 el("div", { class: "sub__newlabel", text: "New custom tags — approve to make filterable" }),
-                el("div", { class: "sub__chips sub__chips--new" }, sub.newTags.map(newTagChip))
+                el("div", { class: "sub__chips sub__chips--new" },
+                  S.submissionNewTags(sub.id).map(newTagChip))
               ])
             : null,
 
@@ -2093,18 +2044,24 @@
           el("div", {}, [
             el("span", { class: "meta__label meta__label--flyer", text: "Flyer" }),
             sub.flyer
-              ? el("div", { class: "flyerproof" }, [
-                  /* The artwork itself when it came through as an image; the
-                     hatched sheet only stands in for a PDF, which the browser
-                     cannot render here. */
-                  sub.flyerImage
-                    ? el("img", {
+              ? el("a", {
+                  class: "flyerproof",
+                  href: "/uploads/" + sub.flyer,
+                  target: "_blank",
+                  rel: "noopener"
+                }, [
+                  /* The artwork itself, not a stand-in: it is uploaded and
+                     served before anyone reviews it, so the reviewer sees what
+                     students would. A PDF has no thumbnail in an <img>, so the
+                     hatched sheet still covers that case. */
+                  /\.pdf$/i.test(sub.flyer)
+                    ? el("div", { class: "flyerproof__sheet" })
+                    : el("img", {
                         class: "flyerproof__image",
-                        src: sub.flyerImage,
+                        src: "/uploads/" + sub.flyer,
                         alt: "Flyer submitted for " + sub.title
-                      })
-                    : el("div", { class: "flyerproof__sheet" }),
-                  el("div", { class: "flyerproof__name", text: sub.flyer })
+                      }),
+                  el("div", { class: "flyerproof__name", text: "Open the full page" })
                 ])
               : el("div", {
                   class: "meta__none",
@@ -2123,7 +2080,7 @@
           ]),
           el("div", {}, [
             el("div", { class: "meta__label", text: "Received" }),
-            el("div", { class: "meta__value", text: sub.submitted })
+            el("div", { class: "meta__value", text: whenSubmitted(sub.submittedAt) })
           ])
         ])
       ])
@@ -2139,7 +2096,6 @@
     }
 
     if (reviewNode) {
-      fill(one("[data-publish]", reviewNode), publishBar());
       fill(one("[data-review-body]", reviewNode), reviewBody());
       return;
     }
@@ -2154,14 +2110,16 @@
          That gap is the one thing about this screen someone could get wrong,
          so it is stated at the top rather than left to be discovered after a
          reviewer wonders why students cannot see the event. */
+      /* Approving is now immediate and public, which is worth saying once at
+         the top: every previous version of this screen only changed the
+         reviewer's own browser, and anyone who used one of those will assume
+         this one does too. */
       el("div", { class: "reviewnote" }, [
-        el("strong", { text: "Approving is not publishing." }),
-        " Submissions arrive as links, and approving one puts it on the " +
-        "calendar in this browser so you can see exactly what students would. " +
-        "It reaches the live site when you press Download events.js and put " +
-        "that file in the repository \u2014 README.md has the steps."
+        el("strong", { text: "Approving publishes straight away." }),
+        " An approved event is on the live calendar within the minute, for " +
+        "everybody. Declining removes the submission from this queue but " +
+        "keeps a record of it."
       ]),
-      el("div", { "data-publish": true }, publishBar()),
       el("div", { "data-review-body": true }, reviewBody())
     ]);
     overlays.appendChild(reviewNode);
@@ -2170,9 +2128,17 @@
   function openReview() {
     if (!state.reviewOpen) focusBeforeOverlay = document.activeElement;
     state.reviewOpen = true;
-    state.linkError = false;
     state.note = "";
     render();
+    refreshQueue();
+  }
+
+  /* The queue is behind Access and is not fetched with the calendar, so it is
+     asked for whenever this screen opens — by button, by keyboard or by URL,
+     which is why it lives here rather than in one of them. Refreshed on every
+     open, since another reviewer may have worked through it since. */
+  function refreshQueue() {
+    S.hydrate(true, true).catch(function () { /* reported by the store's state */ });
   }
 
   function closeReview() {
@@ -2408,16 +2374,6 @@
     one('[data-action="view-month"]').addEventListener("click", function () { setView("month"); });
     one('[data-action="download-view"]').addEventListener("click", downloadView);
 
-    one('[data-action="reset-store"]').addEventListener("click", function () {
-      if (!window.confirm("Discard every submission and approval made in this browser? The calendar goes back to what it ships with.")) return;
-      S.reset();
-      state.reviewSel = 0;
-      state.note = "";
-      gridSignature = null;
-      render();
-      toast("Back to the shipped calendar");
-    });
-
     var search = one("#search");
     search.value = state.query;
     search.addEventListener("input", function (e) { setQuery(e.target.value); });
@@ -2440,7 +2396,17 @@
       render();
     });
 
+    /* The calendar is empty until the first hydrate lands, so the page paints
+       its loading state, fetches, and paints again — rather than flashing an
+       empty grid that looks like a week with nothing in it. */
+    S.onChange(function () { gridSignature = null; render(); });
+
     applyRoute();
+    S.hydrate(state.reviewOpen).catch(function () {
+      /* Already reported through the store's state and painted by render();
+         swallowed here so it does not reach the console as unhandled. */
+    });
+
     setInterval(tick, 200);
   }
 

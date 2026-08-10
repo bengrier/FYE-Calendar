@@ -7,15 +7,43 @@ prototype (Broadsheet design system + CSU brand chrome).
 
 ## Running it
 
-Any static file server will do:
+The site is static files in `public/`; the API is Cloudflare Pages Functions in
+`functions/`. Both run locally through wrangler, against a local database and a
+local file bucket — nothing touches Cloudflare until you deploy.
 
 ```bash
-python3 -m http.server 4173
+npm install -g wrangler
 ```
 
-Then open <http://localhost:4173>. Opening `index.html` from the filesystem works
-too — the scripts are classic (non-module) for exactly that reason — though the
-webfont and flyer PDFs behave better over HTTP.
+First time only, to create and fill the local database:
+
+```bash
+npx wrangler d1 execute fye-calendar --local --file=schema.sql
+```
+
+```bash
+npx wrangler d1 execute fye-calendar --local --file=seed.sql
+```
+
+Then:
+
+```bash
+npx wrangler pages dev public
+```
+
+Re-run the two `d1 execute` lines whenever you want to start over; `schema.sql`
+drops and recreates every table.
+
+Working on the review screen locally needs a `.dev.vars` file containing:
+
+```
+DEV_UNSAFE_NO_AUTH = "1"
+```
+
+That bypasses the Access check, which cannot be satisfied on localhost. The file
+is gitignored and wrangler never uploads it — production variables come from the
+Cloudflare dashboard — so it cannot reach a deployment. Without it the admin API
+refuses everything, which is what it should do.
 
 ## The four surfaces
 
@@ -23,9 +51,9 @@ webfont and flyer PDFs behave better over HTTP.
 | --- | --- |
 | Calendar — week or month grid, searched and filtered | the page itself |
 | Event detail — flyer, tags, add-to-calendar, shareable link | click any event |
-| Submit an event — checked here, sent as a link by email | **Submit an Event** in the header, or `#submit` |
+| Submit an event — straight into the queue | **Submit an Event** in the header, or `#submit` |
 | Slideshow for lobby screens and lecture halls | **Slide Show**; arrows/space step, Esc exits |
-| Review queue (office only) | a submission link, **Shift+R**, or `#review` |
+| Review queue (office only, behind a login) | **Shift+R**, or `#review` |
 
 The showcase above the grid cycles through whatever is currently in view, in the
 order it happens; clicking a row in the running order jumps to it. It holds still
@@ -46,146 +74,158 @@ while a dialog is open and while the tab is in the background.
 every event linkable — **Copy link** in the detail dialog puts that URL on the
 clipboard. `#submit`, `#review` and `#slideshow` address the overlays.
 
-`#review/<payload>` is a submission link: the payload is a whole submission,
-base64url-encoded. Opening one decodes it into the queue and then rewrites the
-URL to plain `#review`, so a reload does not re-run it and the address bar does
-not carry 900 characters of base64. Opening the same link twice is harmless —
-the payload is the submission's identity, so it is recognised rather than
-queued again.
-
 Opening an overlay pushes one history entry, so the browser's Back button
 closes it; moving between events replaces rather than pushes, so Back never has
 to be pressed twice.
 
 ## Layout
 
-- `index.html` — page shell and static chrome. Dynamic regions are marked with
-  `data-stage`, `data-cur`, `data-countdown`, `data-reel` and `data-range`; both
-  the page and the slideshow overlay expose them, so one painter feeds both.
-- `js/events.js` — every event, and nothing else. This is the file the review
-  queue regenerates and the one a colleague replaces to publish; see
-  "Publishing an event" below. Nothing else in the repo has to be touched to
-  put an event on the calendar.
-- `js/data.js` — flyers, filter groups, the starting queue and `CONFIG`. The
-  seam where a backend goes: keep the shapes, swap the literals for a fetch,
-  and nothing above it changes.
-- `js/store.js` — the live calendar. `events.js` plus every submission and
-  approval made in this browser, persisted to localStorage. `app.js` reads
-  events, the queue, tags and flyers from here, never from `data.js` directly.
-- `js/submission.js` — how a submission is encoded into a link and decoded back
-  out, and the email that carries it.
-- `js/dates.js` — Monday-first, whole-day, local-time date helpers, plus the
-  parser that reads an end time back out of a prose time range.
-- `js/ics.js` — iCalendar export.
-- `js/app.js` — state, derived views, and targeted rendering.
-- `css/app.css` — Broadsheet tokens, CSU header, and the calendar components.
-- `flyers/` — flyer artwork (`.png`, what the calendar renders) and the original
-  pages (`.pdf`, what "Open the flyer page" links to).
+Static site in `public/`, API in `functions/`, and nothing else is served. That
+split is the point of the directory: with the repo root as the output,
+`wrangler.toml`, `schema.sql` and `seed.sql` were all fetchable on the live site.
+
+- `public/index.html` — page shell and static chrome. Dynamic regions are marked
+  with `data-stage`, `data-cur`, `data-countdown`, `data-reel` and `data-range`;
+  both the page and the slideshow overlay expose them, so one painter feeds both.
+- `public/js/store.js` — the live calendar. Reads stay **synchronous**, answering
+  from an in-memory cache; `hydrate()` fills that cache from the API and fires
+  the listeners, and only the mutations are asynchronous. That is what kept this
+  change out of every render path in `app.js`.
+- `public/js/data.js` — configuration and the fixed vocabulary: `CONFIG`, the
+  filter groups, the repeat options, and the artwork committed to the repo. No
+  content.
+- `public/js/dates.js` — Monday-first, whole-day, local-time date helpers.
+- `public/js/ics.js` — iCalendar export.
+- `public/js/app.js` — state, derived views, and targeted rendering.
+- `public/css/app.css` — Broadsheet tokens, CSU header, calendar components.
+- `public/flyers/` — artwork committed to the repo. Uploaded flyers are not here;
+  they live in R2 and are served from `/uploads`.
+- `functions/api/` — the API. `functions/api/admin/` is behind Cloudflare Access.
+- `functions/_lib/` — shared server code. A leading underscore means the
+  directory is not routed, so nothing in it is reachable as a URL.
+- `schema.sql`, `seed.sql` — the database and the placeholder content.
 
 ## Submitting an event
 
-There is no server here and no third-party form. A submission is encoded into
-the URL itself: the submit form checks every field, packs the answers into a
-link, and writes an email carrying that link to the office. The submitter
-attaches their flyer and presses send.
+A student fills in the form and presses Submit. That is the whole of it: the
+flyer uploads, the submission is written to the database, and it appears in the
+office's queue. No email, no link to copy, no account to create.
 
-The office opens the link. The review queue decodes it straight back into a
-submission — nothing to retype, nothing stored anywhere in between, nothing to
-license, and no public endpoint for anyone to abuse.
+Two requests rather than one. The flyer goes to `POST /api/flyers` first and
+comes back as a key the submission then references, so a 10 MB file is not
+re-sent because a validation message bounced someone back to the form.
 
-A link runs to about 400–900 characters, which is comfortably inside every
-practical limit. If one arrives truncated — mail clients and chat windows both
-wrap long URLs — the queue says so rather than opening a half-filled card, and
-the submitter still has theirs.
+**The server re-checks everything the form checked.** The client-side checks
+exist to tell someone what is wrong while they are still looking at the field;
+they run in a browser the submitter controls, so they prove nothing. If the two
+ever disagree, the form will accept something the server rejects — so
+`validateDraft` in `public/js/app.js` and `validateSubmission` in
+`functions/_lib/submission.js` have to be changed together.
 
-The flyer is the one thing a link cannot carry, which is why this is an email
-and not just a copied link. It rides along as an attachment, and the office
-puts it in `flyers/` when they publish.
+Uploads are checked on their **bytes**, not on the filename or the declared
+content type: a text file renamed `.png` and sent as `image/png` is refused.
 
-This is not a security boundary and does not try to be. Anyone who reads
-`js/submission.js` can hand-craft a submission link, which buys them a card in a
-queue that a human still has to approve.
+## Reviewing
 
-### Before anyone can submit
+**Shift+R**, or `#review`. The queue is behind Cloudflare Access — see
+"Deploying" — so only allow-listed addresses reach it, and it is fetched fresh
+every time the screen opens.
 
-Set `CONFIG.office.email` in [`js/data.js`](js/data.js) to the First-Year
-office's address. Until it is set, submitting still works — the confirmation
-hands over the link and says to email it to the office — but the page cannot
-open a pre-addressed message, and it says so.
+Approving publishes immediately, for everybody: one event per occurrence of the
+repeat rule, with any custom tags the reviewer kept becoming filterable from
+then on. There is no separate publish step and nothing to commit.
 
-## Reviewing and publishing
+Approving twice does nothing the second time. The status change is part of the
+`UPDATE`, so the database settles a race between a double-click or two
+reviewers, and the loser is told the submission was already decided.
 
-Open a submission link, press **Shift+R**, or use `#review`.
+Declining keeps the row with `status = 'declined'` rather than deleting it —
+someone will ask what happened to a submission.
 
-Approving puts the event on **this browser's** calendar so you can see exactly
-what students would. It does not touch the live site — that is deliberate, and
-the queue says so at the top, because it is the one thing about this screen
-someone could get wrong.
+**Nothing here sends mail.** *Request changes* composes the reply and opens it in
+the reviewer's own mail client; approving and declining tell the reviewer to
+contact the submitter themselves. Set `CONFIG.office.email` in
+`public/js/data.js` for the reply address.
 
-**Request changes** composes a reply and opens it in your own mail client, with
-the submission quoted underneath. Nothing on this page sends mail; approving and
-declining tell you to contact the submitter yourself.
+## Deploying
 
-### Publishing an event
+1. Create the Pages project and point it at this repo. Build output directory
+   `public`, no build command.
+2. Create the database and bucket, and put the returned ID in `wrangler.toml`:
 
-This is the whole of it, and it needs no terminal and no git commands:
+```bash
+npx wrangler d1 create fye-calendar
+```
 
-1. Approve the submission.
-2. Press **Download events.js**.
-3. Go to [`js/events.js`](js/events.js) on github.com, press the pencil, select
-   all, and paste in the downloaded file. Or drag the file into the repository
-   through the web UI — same result.
-4. Write a line saying what you added, and commit.
+```bash
+npx wrangler r2 bucket create fye-calendar-flyers
+```
 
-The site rebuilds in about a minute.
+3. Apply the schema and seed to the real database:
 
-The generated file is byte-identical to the one in the repo apart from the
-events you added, so the diff GitHub shows before you commit is exactly the new
-event and nothing else. Read it — that diff is the last check before students
-see it.
+```bash
+npx wrangler d1 execute fye-calendar --remote --file=schema.sql
+```
 
-If the event has a flyer, add the image to `flyers/` the same way, register it
-in `FLYERS` in `js/data.js`, and set the event's `flyer` key to match.
+```bash
+npx wrangler d1 execute fye-calendar --remote --file=seed.sql
+```
 
-**Anything already published stays published.** The download always contains the
-whole calendar, so replacing the file never drops events someone else added —
-unless two people publish from different browsers at the same time, in which
-case whoever commits second overwrites the first. With one office doing this a
-few times a week that is theoretical, but it is the reason to publish soon after
-approving rather than banking a week of them.
+4. In **Zero Trust → Access → Applications**, add a self-hosted application
+   covering `/review` and `/api/admin/*`, with a policy allowing the specific
+   `colostate.edu` addresses that should be able to approve events. Free for up
+   to 50 users.
+5. Copy the application's **AUD tag** and your team domain into the Pages
+   project's environment variables as `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN`.
+
+Until step 5 is done the admin API refuses every request. That is deliberate: an
+unconfigured deployment is a locked one, never an open one.
+
+6. Add a rate-limiting rule on `/api/submissions` — a few per IP per hour. It is
+   the one public write endpoint on a public site.
 
 ## The seeded events are placeholders
 
-Every event in [`js/events.js`](js/events.js) is invented — written to build and
-demonstrate against — and carries `temporary: true`. That marks each tile
-**Sample**, badges the event dialog, and puts a line above the grid saying so,
-worded from a live count: "every event on this calendar" while they all are,
-"23 events are placeholder data" as real ones arrive, and nothing once the last
-one goes.
+Every event `seed.sql` inserts is invented — written to build and demonstrate
+against — and carries `temporary = 1`. That marks each tile **Sample**, badges
+the event dialog, and puts a line above the grid saying so, worded from a live
+count: "every event on this calendar" while they all are, "23 events are
+placeholder data" as real ones arrive, and nothing once the last one goes.
 
-Real events do not carry the flag; the publisher never adds it. To clear the
-placeholders, delete the flagged entries — the notice removes itself.
+Approved events never carry the flag. To clear the placeholders:
+
+```bash
+npx wrangler d1 execute fye-calendar --remote --command="DELETE FROM event_tags WHERE event_id IN (SELECT id FROM events WHERE temporary = 1); DELETE FROM events WHERE temporary = 1;"
+```
+
+The notice removes itself.
 
 ## Configuration
 
-`CONFIG` in `js/data.js`:
+`CONFIG` in [`public/js/data.js`](public/js/data.js):
 
 - `slideSeconds` — how long each flyer holds on the stage (default 9).
 - `defaultView` — `"week"` or `"month"`.
 - `today` — the real current date. Pin it to an ISO string (`"2026-04-27"`) if
   you want the calendar to open somewhere specific for a demo.
-- `office.email` — where submissions are sent. Empty until someone sets it;
-  while it is, submitting still produces a link but no pre-addressed email.
-- `office.name` — how the office is referred to in the copy.
+- `office.email` — the address a reviewer's *Request changes* reply is
+  addressed to. Nothing sends mail; this only fills in the To: field.
 
-The seeded events in `js/data.js` are a sample semester running Aug 3 – Sep 11,
-2026. When a view has nothing in it the showcase collapses to one line that says
-why, counts the matches elsewhere on the calendar, and offers to jump to the
-first of them.
+`GROUPS` in the same file is the filter bar. Its chips are mirrored into the
+`tags` table as `kind = 'fixed'` so the server can tell a tag someone picked off
+a list from one they invented — change them here and re-run `seed.sql`, or the
+two will disagree about what counts as a new tag.
+
+Environment variables, set in the Pages dashboard:
+
+- `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` — the Access application. Unset means the
+  admin API refuses everything.
+- `DEV_UNSAFE_NO_AUTH` — local only, via `.dev.vars`. Never set this in the
+  dashboard.
 
 The exported `.ics` writes times against an `America/Denver` VTIMEZONE. If this
-is ever reused off the Front Range, `TZID` in `js/ics.js` is the one thing to
-change.
+is ever reused off the Front Range, `TZID` in `public/js/ics.js` is the one thing
+to change.
 
 ## Notes on rendering
 

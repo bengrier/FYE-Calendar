@@ -1,0 +1,49 @@
+# Cloudflare Pages project for the First-Year Engineering Calendar.
+#
+# The site is the static files in public/; the API is Pages Functions in
+# /functions, which deploy with the same push and share the origin — so there is
+# one deployment, not two, and no CORS to configure.
+#
+# Only public/ is served. That is the reason for the directory: with the repo
+# root as the output, wrangler.toml, schema.sql and seed.sql were all fetchable
+# on the live site. Anything that is not meant to be downloadable by a stranger
+# belongs outside public/.
+#
+# Local development:
+#   npx wrangler d1 execute fye-calendar --local --file=schema.sql
+#   npx wrangler d1 execute fye-calendar --local --file=seed.sql
+#   npx wrangler pages dev public
+#
+# The IDs below are filled in by `wrangler d1 create fye-calendar`. Local
+# development works without them; deploying does not.
+
+name = "fye-calendar"
+compatibility_date = "2026-08-08"
+pages_build_output_dir = "public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "fye-calendar"
+database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"
+
+[[r2_buckets]]
+binding = "FLYERS"
+bucket_name = "fye-calendar-flyers"
+
+[vars]
+# Cloudflare Access gates /review and /api/admin/* at the edge; the Functions
+# verify the Access JWT as well, so a request that reaches them another way is
+# still refused. Set both of these in the Pages dashboard after creating the
+# Access application. While they are unset the admin API refuses everything —
+# it fails closed, never open.
+ACCESS_TEAM_DOMAIN = ""
+ACCESS_AUD = ""
+
+# Local development cannot present an Access JWT, so admin routes are
+# unreachable with the settings above. Put
+#
+#   DEV_UNSAFE_NO_AUTH = "1"
+#
+# in a `.dev.vars` file to work on them locally. That file is gitignored, and
+# wrangler never uploads it — production variables come from the dashboard — so
+# it cannot leak into a deployment. It is named to be alarming on purpose.

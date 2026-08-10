@@ -1,0 +1,79 @@
+/* POST /api/submissions — a student submitting an event.
+
+   The one public write endpoint on a public site, so it assumes the body is
+   hostile: every field is re-validated here, the flyer is only accepted as a
+   key this API itself issued, and nothing it writes is visible to anybody until
+   a reviewer approves it.
+
+   Rate limiting is a Cloudflare rule on this path rather than code — it belongs
+   at the edge, where it costs nothing and cannot be reasoned around. */
+
+import { json, fail, methodNotAllowed, readJson, uid } from "../_lib/http.js";
+import { validateSubmission } from "../_lib/submission.js";
+
+export async function onRequest(context) {
+  if (context.request.method !== "POST") return methodNotAllowed("POST");
+
+  var body = await readJson(context.request);
+  var todayIso = new Date().toISOString().slice(0, 10);
+  var checked = validateSubmission(body, todayIso);
+
+  if (!checked.ok) return fail(400, checked.message, checked.field);
+
+  var sub = checked.value;
+  var db = context.env.DB;
+  var id = uid("s");
+
+  /* The flyer is referenced by a key POST /api/flyers handed out moments ago.
+     Taking a caller's word for it would let anyone point a submission at any
+     object in the bucket, so it is confirmed to exist and to be unclaimed. */
+  var flyerKey = typeof body.flyerKey === "string" ? body.flyerKey.trim() : "";
+  if (flyerKey) {
+    if (!/^f-[A-Za-z0-9._-]{6,120}$/.test(flyerKey)) {
+      return fail(400, "That flyer reference is not one we issued.", "flyer");
+    }
+    var claimed = await db
+      .prepare("SELECT 1 FROM submissions WHERE flyer_key = ?")
+      .bind(flyerKey)
+      .first();
+    if (claimed) return fail(400, "That flyer has already been used.", "flyer");
+
+    var object = await context.env.FLYERS.head(flyerKey);
+    if (!object) return fail(400, "That flyer upload was not found.", "flyer");
+  }
+
+  var statements = [
+    db
+      .prepare(
+        "INSERT INTO submissions (id, status, title, org, place, date, start, time, blurb, " +
+        "repeat_rule, repeat_until, by_name, by_email, flyer_key, awaiting, submitted_at) " +
+        "VALUES (?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)"
+      )
+      .bind(
+        id, sub.title, sub.org, sub.place, sub.date, sub.start, sub.time, sub.blurb,
+        sub.repeat, sub.repeatUntil, sub.by, sub.email, flyerKey || null, Date.now()
+      )
+  ];
+
+  /* A tag is "new" only when the calendar has never heard of it. A filter-bar
+     chip and an already-approved custom tag are both known; anything else the
+     submitter invented, and a reviewer decides whether it becomes filterable.
+     Deciding that here rather than trusting the client's flag is the difference
+     between the office choosing that and the submitter choosing it. */
+  var known = new Set(
+    (await db.prepare("SELECT name FROM tags WHERE approved = 1").all()).results
+      .map(function (r) { return r.name; })
+  );
+
+  sub.tags.concat(sub.newTags).forEach(function (tag) {
+    statements.push(
+      db
+        .prepare("INSERT OR IGNORE INTO submission_tags (submission_id, tag, is_new) VALUES (?, ?, ?)")
+        .bind(id, tag, known.has(tag) ? 0 : 1)
+    );
+  });
+
+  await db.batch(statements);
+
+  return json({ id: id }, { status: 201 });
+}

@@ -2,3 +2,11 @@
 
 # Per-machine Claude Code permissions; .claude/launch.json is shared on purpose.
 .claude/settings.local.json
+
+# Local-only Worker vars (wrangler never uploads this; production vars live in
+# the Cloudflare dashboard). Holds DEV_UNSAFE_NO_AUTH for local admin work.
+.dev.vars
+
+# wrangler's local D1/R2 state and build cache
+.wrangler/
+node_modules/

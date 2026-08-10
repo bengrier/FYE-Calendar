@@ -11,7 +11,17 @@ open.
 > hands off to the office's Microsoft Form so responses land in SharePoint.
 > Written up at [the bottom](#the-microsoft-forms-pass-2026-08-08).
 
+> **2026-08-08, final — there is a server now.** Everything below this line
+> describes a static site working around not having one. It does now: Cloudflare
+> Pages with Functions, D1 and R2, and Cloudflare Access for approver login. A
+> student submits from the site and it lands in a shared queue; a reviewer signs
+> in, approves, and it is live. No downloads, no email relay, no editing code to
+> publish. Written up at [the bottom](#the-server-pass-2026-08-08). **Still to
+> do:** create the Access application and set `ACCESS_AUD` and
+> `ACCESS_TEAM_DOMAIN`, or the review API stays closed.
+
 > **2026-08-08, later still — submissions are links, and Forms is gone.**
+> *(Superseded by the pass above.)*
 > Microsoft Forms solved the wrong half of the problem: it gave submissions
 > somewhere to land, but publishing an approved event still meant hand-editing
 > JavaScript, which is the part an office colleague cannot reasonably be asked
@@ -177,20 +187,18 @@ PDF stay in step.
 
 ### Still open
 
-**`CONFIG.office.email` is empty.** One line in `js/data.js`. Submitting works
-without it — the confirmation hands over the link and says to email it — but the
-page cannot open a pre-addressed message until it is set.
+**Nothing is deployed.** Everything is built and tested against local D1 and R2
+through `wrangler pages dev`. The Cloudflare account, the Pages project, the
+database, the bucket and the Access application do not exist yet. README's
+"Deploying" is the list, and step 5 is the one that matters: until `ACCESS_AUD`
+and `ACCESS_TEAM_DOMAIN` are set, the review API refuses every request.
 
-An earlier version disabled the Submit button when it was unset. That was wrong:
-it left someone who had filled in the whole form with nothing to show for it, and
-it read as the page being broken rather than unconfigured. A missing setting
-should degrade what the page can do for you, not refuse to do the thing you
-came for.
+**`CONFIG.office.email` is empty.** One line, and it only affects the To: field
+on a reviewer's *Request changes* reply. Nothing depends on it any more.
 
-**Nobody has published an event end to end yet.** The flow is built and tested
-in a browser, but no colleague has actually taken a download and put it in the
-repo. That first run is where the README either holds up or does not, and it is
-worth doing with someone watching.
+**The Cloudflare account is a new single point of failure**, exactly like the
+GitHub one. Create it as an account the office owns, or add a second admin
+before there is data in it.
 
 ## Notes for whoever extends this
 
@@ -496,3 +504,108 @@ a message a person has read before sending is better than one a machine sent.
 
 The queue is per-browser, which is correct here: a submission link is addressed
 to whoever is reviewing it, and the calendar it publishes to is the repo.
+
+## The server pass, 2026-08-08
+
+### Why, after three attempts not to
+
+Three designs came before this, and each failed the same way in a different
+place: the page had no credentials, so it could not write anywhere.
+
+- **localStorage** — approvals existed only in the reviewer's own browser.
+- **Microsoft Forms** — gave submissions somewhere to land, but publishing was
+  still hand-edited JavaScript, and it brought a tenant dependency.
+- **Links by email** — needed nothing and worked, but submissions arrived in one
+  person's inbox, there was no upload control, and pressing Submit did not feel
+  like submitting. That last one is what finally made the case: a design that
+  has to be explained every time it is used is not finished.
+
+A small server closes all of it at once, and the free tiers involved are not
+close to being strained by a campus calendar.
+
+### The stack, and the one that was rejected
+
+Cloudflare Pages for hosting, Pages Functions for the API, D1 for the database,
+R2 for flyers, Access for approver login.
+
+**Pages Functions rather than a standalone Worker**: the API lives in
+`functions/` in the same repo, deploys on the same push, and shares the origin —
+one deployment instead of two, and no CORS to configure.
+
+**Access is the reason to be on Cloudflare at all.** It gates `/review` and
+`/api/admin/*` at the edge against an allow-list, and it means the
+security-sensitive part of this build — password hashing, sessions, reset flows
+— was deleted rather than written. Free to 50 users.
+
+**Supabase was rejected**: its free tier pauses a project after 7 days of
+inactivity. Over winter break that is a silent outage, and the standard fix is a
+keep-alive cron, which is a moving part that fails quietly.
+
+### What kept the change small
+
+`js/store.js` exposed **synchronous** reads — `events()` called inside a render
+function, `flyerOf()` while painting a card — and making those asynchronous
+would have touched every render path in `app.js`.
+
+So they stayed synchronous, answering from an in-memory cache. `hydrate()` fills
+that cache and fires the existing `onChange` listeners, and the re-render wiring
+that was already there repaints exactly as it did when the data was a local
+array. Only the four mutations became asynchronous, because only they have to
+wait for a server to agree.
+
+The store's original header comment said swapping localStorage for a server
+would mean reimplementing `load` and `save` and nothing else. That turned out to
+be very nearly true.
+
+### Things found by testing, not by reading
+
+- **The whole repo was being served.** `pages_build_output_dir = "."` meant
+  `wrangler.toml`, `schema.sql` and `seed.sql` were all fetchable on the live
+  site. Hence `public/`: only what is in it is served. `.assetsignore` does not
+  work for Pages — that was tried first.
+- **A Function at `/flyers/` shadowed the bundled artwork**, 404ing every flyer
+  committed to the repo. Uploads moved to `/uploads/`; two sources of artwork,
+  two path spaces, no collision to reason about.
+- **The server called every filter chip a new tag.** `Electrical` and `Workshop`
+  were being dropped from approved events, because the server only knew about
+  *custom* tags and treated everything else as invented. The filter bar's chips
+  are now mirrored into `tags` as `kind = 'fixed'`.
+- **A reviewer could not see their own approval.** `/api/events` is cached for a
+  minute at the edge, which is right for the hundreds of people reading the
+  calendar and wrong for the one who just changed it. Mutations and explicit
+  refreshes now bypass it with a unique query string.
+- **The empty stage stranded itself on "Loading…"** after a failed fetch,
+  because its cache key did not include the load state — the same shape of bug
+  the 2026-08-08 pass found when the key omitted the anchor date.
+- **`#review` in the URL did not fetch the queue.** Only the button and the
+  keyboard shortcut did, so a bookmarked review link opened on an empty queue.
+
+### Deliberate calls
+
+- **The admin API fails closed.** No Access configuration means every admin
+  request is refused, never allowed. Local development gets past this only
+  through `.dev.vars`, which wrangler does not upload.
+- **The Access JWT is verified in the Function too**, not just trusted because
+  Access is in front. A deleted rule or a misconfigured application should not
+  silently open the queue.
+- **Uploads are identified by their bytes**, not by filename or declared type.
+- **Validation is duplicated on purpose.** The client copy tells someone what is
+  wrong while they type; the server copy decides. They must be changed together
+  — `validateDraft` in `public/js/app.js`, `validateSubmission` in
+  `functions/_lib/submission.js`.
+- **Approve claims the row with the status change inside the `UPDATE`**, so the
+  database settles a double-click or two reviewers racing, rather than a
+  read-then-write in one of them.
+- **A failed refresh leaves what is on screen alone** and says it may be stale.
+  A calendar a few minutes old beats one that empties itself because a request
+  timed out.
+
+### What this costs
+
+More to maintain than a static site: a database, a bucket, an access policy and
+a deployment. The site no longer opens from the filesystem — that was a
+deliberate property and a server ends it. And the free tiers are generous but
+not guaranteed forever.
+
+Worth it for what it buys: one shared queue, real logins, working uploads, and
+an interface that no longer has to explain itself.

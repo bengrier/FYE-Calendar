@@ -1,0 +1,254 @@
+/* The live calendar, backed by the API.
+
+   The whole of app.js reads the calendar synchronously — `events()` inside a
+   render function, `flyerOf()` while painting a card — and rewriting all of that
+   to be asynchronous would touch every render path for no benefit. So the read
+   interface below is unchanged and still synchronous: it answers out of an
+   in-memory cache.
+
+   What changed is where the cache comes from. `hydrate()` fetches, fills it and
+   fires the listeners; the existing onChange → re-render wiring then repaints
+   exactly as it did when the data was a local array. Mutations are the only
+   things that became asynchronous, because they are the only things that have
+   to wait for a server to agree.
+
+   Nothing is persisted in the browser any more. The database is the one copy,
+   which is what makes two reviewers see the same queue. */
+window.CalStore = (function () {
+  "use strict";
+
+  var C = window.CalData;
+
+  /* Everything the calendar knows, replaced wholesale on each hydrate. Partial
+     updates would need merge rules, and a wrong merge shows somebody an event
+     that is not there. */
+  var cache = {
+    events: [],
+    customTags: [],
+    queue: [],
+    queueTags: {},
+    queueNewTags: {}
+  };
+
+  var listeners = [];
+  var status = { loaded: false, loading: false, error: null };
+
+  function onChange(fn) { listeners.push(fn); }
+  function changed() { listeners.forEach(function (fn) { fn(); }); }
+
+  /* ======================================================================
+     Talking to the API
+     ====================================================================== */
+
+  function request(path, options) {
+    return fetch(path, options).then(function (res) {
+      return res
+        .json()
+        .catch(function () { return {}; })
+        .then(function (body) {
+          if (res.ok) return body;
+          var err = new Error(body.error || "That did not work.");
+          err.status = res.status;
+          err.field = body.field || null;
+          throw err;
+        });
+    });
+  }
+
+  /* Read the calendar. `withQueue` additionally asks for the review queue,
+     which is behind Access — so it is only requested on the review screen, and
+     a refusal there is reported rather than swallowed.
+
+     `fresh` bypasses the caches. /api/events is cached for a minute at the
+     edge, which is right for the hundreds of people reading the calendar and
+     wrong for the one person who just changed it: a reviewer who approves an
+     event and does not see it appear concludes the approval failed. A unique
+     query string is a different cache key, so it reaches the database. */
+  function hydrate(withQueue, fresh) {
+    status.loading = true;
+    status.error = null;
+    changed();
+
+    var eventsUrl = fresh ? "/api/events?t=" + Date.now() : "/api/events";
+    var wanted = [request(eventsUrl)];
+    if (withQueue) wanted.push(request("/api/admin/queue"));
+
+    return Promise.all(wanted)
+      .then(function (results) {
+        cache.events = results[0].events || [];
+        cache.customTags = results[0].customTags || [];
+
+        if (results[1]) {
+          cache.queue = results[1].queue || [];
+          cache.queueTags = results[1].tags || {};
+          cache.queueNewTags = results[1].newTags || {};
+        }
+
+        status.loaded = true;
+        status.loading = false;
+        status.error = null;
+        changed();
+        return cache;
+      })
+      .catch(function (err) {
+        status.loading = false;
+        /* A failed hydrate leaves whatever was already shown in place. A
+           calendar that has gone stale for a minute is better than one that
+           empties itself because a request timed out. */
+        status.error = err;
+        changed();
+        throw err;
+      });
+  }
+
+  function state() {
+    return {
+      loaded: status.loaded,
+      loading: status.loading,
+      error: status.error
+    };
+  }
+
+  /* ======================================================================
+     Reading — synchronous, from the cache
+     ====================================================================== */
+
+  function events() { return cache.events; }
+
+  function eventById(id) {
+    return cache.events.filter(function (e) { return e.id === id; })[0] || null;
+  }
+
+  function queue() { return cache.queue; }
+
+  function customTags() { return cache.customTags; }
+
+  /* Tags a queued submission carries, split into ones the calendar already
+     knows and ones the submitter invented. The reviewer approves the second
+     list; the server decides which is which. */
+  function submissionTags(id) { return cache.queueTags[id] || []; }
+  function submissionNewTags(id) { return cache.queueNewTags[id] || []; }
+
+  /* Every tag an event answers to: its own — which now arrive from the server
+     already including any approved custom ones — plus its time of day and
+     "Free", since nothing on this calendar costs anything. */
+  function allTags(ev) {
+    return (ev.tags || []).concat([C.timeOfDay(ev), "Free"]);
+  }
+
+  /* Two kinds of artwork behind one call. A bundled key like "peru" is a file
+     committed to the repo; anything else is an upload in R2, served from
+     /uploads. The rest of the app never has to know the difference. */
+  function flyer(key) {
+    if (!key) return null;
+    if (C.FLYERS[key]) return C.FLYERS[key];
+    var url = "/uploads/" + key;
+    return { image: url, page: url };
+  }
+
+  function flyerOf(ev) { return flyer(ev && ev.flyer); }
+
+  /* Every date a repeating submission lands on. The server does this again
+     when approving — it is the one that counts — but the reviewer is told how
+     many events approving will create before they press it, and that number
+     has to be right. Keep this in step with functions/_lib/submission.js. */
+  function occurrences(sub) {
+    var D = window.CalDates;
+    var dates = [sub.date];
+    if (!sub.repeat || !sub.repeatUntil) return dates;
+
+    var step = sub.repeat === "weekly" ? 7 : sub.repeat === "biweekly" ? 14 : 0;
+    var cursor = D.fromIso(sub.date);
+    var last = D.fromIso(sub.repeatUntil);
+
+    for (var i = 0; i < 60; i++) {
+      cursor = step ? D.addDays(cursor, step) : sameWeekdayNextMonth(cursor);
+      if (cursor > last) break;
+      dates.push(D.toIso(cursor));
+    }
+    return dates;
+  }
+
+  function sameWeekdayNextMonth(d) {
+    var D = window.CalDates;
+    var nth = Math.floor((d.getDate() - 1) / 7);
+    var first = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+    var offset = (D.dowIndex(d) - D.dowIndex(first) + 7) % 7;
+    var target = D.addDays(first, offset + nth * 7);
+    /* A 5th Tuesday does not exist every month; fall back to the 4th. */
+    return target.getMonth() === first.getMonth() ? target : D.addDays(target, -7);
+  }
+
+  /* ======================================================================
+     Writing — asynchronous, through the API
+     ====================================================================== */
+
+  /* Uploads first and separately, so a 10 MB file is not re-sent every time a
+     validation message sends the submitter back to the form. Resolves to the
+     key the submission then references. */
+  function uploadFlyer(file) {
+    var form = new FormData();
+    form.append("flyer", file);
+    return request("/api/flyers", { method: "POST", body: form })
+      .then(function (body) { return body.key; });
+  }
+
+  function submit(draft) {
+    return request("/api/submissions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(draft)
+    });
+  }
+
+  function approve(id, approvedTags) {
+    return request("/api/admin/approve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: id, approvedTags: approvedTags || [] })
+    }).then(function (result) {
+      return hydrate(true, true).then(function () { return result; });
+    });
+  }
+
+  function decline(id) {
+    return request("/api/admin/decline", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: id })
+    }).then(function (result) {
+      return hydrate(true, true).then(function () { return result; });
+    });
+  }
+
+  function noteFeedback(id) {
+    return request("/api/admin/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: id })
+    }).then(function (result) {
+      return hydrate(true).then(function () { return result; });
+    });
+  }
+
+  return {
+    hydrate: hydrate,
+    state: state,
+    events: events,
+    eventById: eventById,
+    queue: queue,
+    customTags: customTags,
+    submissionTags: submissionTags,
+    submissionNewTags: submissionNewTags,
+    allTags: allTags,
+    flyer: flyer,
+    flyerOf: flyerOf,
+    occurrences: occurrences,
+    uploadFlyer: uploadFlyer,
+    submit: submit,
+    approve: approve,
+    decline: decline,
+    noteFeedback: noteFeedback,
+    onChange: onChange
+  };
+})();
