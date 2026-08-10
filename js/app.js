@@ -1205,6 +1205,7 @@
   function submitDone() {
     var handoff = state.submitted;
     var sub = handoff.summary;
+    var to = SUB.office().email;
 
     var linkBox = el("input", {
       type: "text",
@@ -1219,8 +1220,8 @@
       el("h3", {
         class: "done__title",
         text: handoff.opened
-          ? "Send the email — it is written and waiting."
-          : "Send this to the office."
+          ? "Almost there — send the email."
+          : "Almost there — send this to the office."
       }),
 
       /* Reading the submission back is the only confirmation there is that the
@@ -1243,10 +1244,11 @@
       el("p", {
         class: "done__body",
         text: handoff.opened
-          ? "A draft is open in your mail client with everything above already in it. Attach your flyer and press send — nothing reaches the office until you do."
-          : "Your mail client did not open. Send the link below to " +
-            (SUB.office().email || "the office") +
-            ", with your flyer attached. Everything above travels in the link, so there is nothing to retype."
+          ? "A draft is open in your mail client with everything above already in it. Attach your flyer and press send — your submission does not reach the office until you do."
+          : to
+            ? "Your mail client did not open. Email the link below to " + to +
+              ", with your flyer attached. Everything above travels in the link, so there is nothing to retype."
+            : "Email the link below to the First-Year office, with your flyer attached. Everything above travels in the link, so there is nothing to retype."
       }),
 
       el("div", { class: "done__linkrow" }, [
@@ -1262,12 +1264,16 @@
       ]),
 
       el("div", { class: "done__actions" }, [
-        /* A real link, so it survives whatever the mail handler did. */
-        el("a", {
-          class: "btn-primary btn-primary--link",
-          href: handoff.mailto,
-          text: handoff.opened ? "Open the email again" : "Open the email"
-        }),
+        /* A real link, so it survives whatever the mail handler did. Absent
+           entirely when there is no address to write to — a button that opens
+           mail to nobody is worse than no button. */
+        handoff.mailto
+          ? el("a", {
+              class: "btn-primary btn-primary--link",
+              href: handoff.mailto,
+              text: handoff.opened ? "Open the email again" : "Open the email"
+            })
+          : null,
         /* The draft is deliberately still in state. Someone who spots a wrong
            room number while writing the email can come back, fix it and
            regenerate rather than retype the lot. */
@@ -1340,23 +1346,27 @@
       return;
     }
 
-    /* Guarded rather than assumed: the button is not offered while the office
-       address is unset, but a draft can outlive a change to CONFIG. */
-    if (!SUB.configured()) { renderSubmit(); return; }
-
     var sub = submissionFrom(d);
     var link = SUB.linkFor(sub);
-    var mailto = SUB.mailtoFor(sub, link);
+
+    /* A missing office address must not be a dead end. The submission is real
+       either way — it is the link — so without an address to open mail to, the
+       confirmation hands over the link and says who to send it to. Refusing to
+       submit at all was the wrong call: it left someone who had filled in the
+       whole form with nothing to show for it. */
+    var mailto = SUB.configured() ? SUB.mailtoFor(sub, link) : null;
 
     /* Assigning location.href is what hands a mailto: to the OS. There is no
        way to learn whether a mail client actually opened, so this is reported
        as "a draft is open" only when the assignment itself did not throw —
-       and the link and the mailto are both left on screen either way. */
+       and the link is on screen either way. */
     var opened = false;
-    try {
-      window.location.href = mailto;
-      opened = true;
-    } catch (e) { /* no mail handler; the copyable link is the fallback */ }
+    if (mailto) {
+      try {
+        window.location.href = mailto;
+        opened = true;
+      } catch (e) { /* no mail handler; the copyable link is the fallback */ }
+    }
 
     state.submitted = {
       link: link,
@@ -1391,7 +1401,11 @@
       el("div", { class: "notice" }, [
         el("div", {
           class: "notice__lead",
-          text: "Attach the flyer to the email this produces."
+          text: "There is no upload here — attach the flyer to the email instead."
+        }),
+        el("div", {
+          class: "notice__body",
+          text: "Pressing Submit opens an email to the office with everything on this page already in it. Attach your flyer to that email before sending, and it arrives with the rest."
         }),
         el("div", {
           class: "notice__body",
@@ -1406,14 +1420,14 @@
      someone to press the button and watch mail open to nobody. */
   function unlinkedNotice() {
     return el("div", { class: "alert alert--setup", role: "alert" }, [
-      el("strong", { text: "This form does not know where to send submissions yet." }),
+      el("strong", { text: "No office address is set, so this cannot open your mail for you." }),
       el("p", {
         class: "alert__body",
-        text: "Nobody can submit an event until CONFIG.office.email in js/data.js holds the First-Year office's address. It is a one-line change; README.md says where."
+        text: "You can still submit: you will be given a link to email to the First-Year office yourself, with your flyer attached."
       }),
       el("p", {
         class: "alert__body",
-        text: "If you were trying to submit an event, email the Common First-Year office directly — they can add it by hand."
+        text: "Whoever runs this site: set CONFIG.office.email in js/data.js. README.md says where."
       })
     ]);
   }
@@ -1600,21 +1614,26 @@
           el("button", {
             type: "button",
             class: "btn-primary btn-primary--lg",
-            /* The button names what pressing it does. It does not send
-               anything — it writes the email the submitter then sends. */
-            text: "Write the email",
-            disabled: ready ? null : true,
-            title: ready ? null : "There is no office address to send to yet",
+            text: "Submit",
             onClick: sendDraft
           }),
-          el("button", { type: "button", class: "btn-secondary btn-secondary--lg", text: "Cancel", onClick: closeSubmit })
+          el("button", { type: "button", class: "btn-secondary btn-secondary--lg", text: "Cancel", onClick: closeSubmit }),
+          /* The last thing read before pressing the button, because the flyer
+             is the one part of the submission this page cannot carry for you
+             and the one people will otherwise forget. */
+          ready
+            ? el("div", {
+                class: "submit__hint",
+                text: "Submitting opens an email to the office. Attach your flyer to it before you send."
+              })
+            : null
         ])
       ]),
 
       el("aside", { class: "sidenote" }, [
         el("div", { class: "kicker", text: "Before you send" }),
         el("div", { class: "sidenote__rule" }),
-        el("p", { text: "This page checks your answers and writes the email for you. Everything you type travels inside a link in that email, so the office has nothing to retype — but you do have to attach the flyer and press send yourself." }),
+        el("p", { text: "Everything you type here travels inside a link, so the office has nothing to retype. Submitting opens an email carrying that link — you attach the flyer and press send." }),
         el("p", { text: "Every submission is reviewed by the First-Year team before it appears. Please allow for up to 3 business days for approval." }),
         el("p", { text: "Events without a flyer still get listed, but they show a placeholder card and are easier to scroll past." })
       ])

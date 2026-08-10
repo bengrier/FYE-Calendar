@@ -109,8 +109,9 @@ queue that a human still has to approve.
 ### Before anyone can submit
 
 Set `CONFIG.office.email` in [`js/data.js`](js/data.js) to the First-Year
-office's address. Until it is set the submit form says so plainly and its button
-is disabled, rather than composing mail to nobody.
+office's address. Until it is set, submitting still works — the confirmation
+hands over the link and says to email it to the office — but the page cannot
+open a pre-addressed message, and it says so.
 
 ## Reviewing and publishing
 
@@ -173,8 +174,8 @@ placeholders, delete the flagged entries — the notice removes itself.
 - `defaultView` — `"week"` or `"month"`.
 - `today` — the real current date. Pin it to an ISO string (`"2026-04-27"`) if
   you want the calendar to open somewhere specific for a demo.
-- `office.email` — where submissions are sent. Empty until someone sets it, and
-  while it is, nobody can submit an event.
+- `office.email` — where submissions are sent. Empty until someone sets it;
+  while it is, submitting still produces a link but no pre-addressed email.
 - `office.name` — how the office is referred to in the copy.
 
 The seeded events in `js/data.js` are a sample semester running Aug 3 – Sep 11,

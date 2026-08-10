@@ -1064,7 +1064,7 @@ textarea:focus-visible,
 .submit__times { display: grid; grid-template-columns: 1.2fr 1fr 1fr; gap: 16px; }
 .submit__repeat { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; }
 .submit__who { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.submit__actions { display: flex; gap: 12px; align-items: center; margin-top: 6px; }
+.submit__actions { display: flex; gap: 12px; align-items: center; margin-top: 6px; flex-wrap: wrap; }
 
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field--grow { flex: 1 1 220px; }
@@ -1154,6 +1154,15 @@ textarea.input { font-size: 17px; line-height: 1.5; resize: vertical; }
 }
 .notice__lead { font-size: 17px; font-weight: 600; }
 .notice__body { font-size: 16px; color: var(--ink-65); margin-top: 8px; line-height: 1.5; }
+
+/* Sits under the Submit button, so it is the last thing read before pressing
+   it. Full-width in the flex row rather than beside the buttons. */
+.submit__hint {
+  flex: 1 0 100%;
+  font-size: 15px;
+  color: var(--ink-65);
+  margin-top: 4px;
+}
 
 .sidenote { padding-top: 4px; }
 .sidenote__rule { height: 1px; background: var(--ink-20); margin: 12px 0 18px; }

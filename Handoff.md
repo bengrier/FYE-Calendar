@@ -177,10 +177,15 @@ PDF stay in step.
 
 ### Still open
 
-**`CONFIG.office.email` is empty.** One line in `js/data.js`, and nobody can
-submit an event until it is set — the form says exactly that rather than
-composing mail to nobody. It is the only thing between here and a working
-submission path.
+**`CONFIG.office.email` is empty.** One line in `js/data.js`. Submitting works
+without it — the confirmation hands over the link and says to email it — but the
+page cannot open a pre-addressed message until it is set.
+
+An earlier version disabled the Submit button when it was unset. That was wrong:
+it left someone who had filled in the whole form with nothing to show for it, and
+it read as the page being broken rather than unconfigured. A missing setting
+should degrade what the page can do for you, not refuse to do the thing you
+came for.
 
 **Nobody has published an event end to end yet.** The flow is built and tested
 in a browser, but no colleague has actually taken a download and put it in the
