@@ -5,59 +5,66 @@ which covers how to run the app and how the code is laid out. This file covers
 what state the work is in, what is deliberately the way it is, and what is still
 open.
 
-> **2026-08-08, later — submissions go to Microsoft Forms.** *(Superseded the
-> same day; see the note below. Left in place because the reasoning about what
-> is and is not possible against Forms is still worth having.)* The submit form
-> hands off to the office's Microsoft Form so responses land in SharePoint.
-> Written up at [the bottom](#the-microsoft-forms-pass-2026-08-08).
+> **2026-08-08 — there is a server now, and this is the current design.**
+> Cloudflare Pages with Functions, D1 and R2, and Cloudflare Access for approver
+> login. A student submits from the site and it lands in a shared queue; a
+> reviewer signs in, approves, and it is live. No downloads, no email relay, no
+> editing code to publish. Written up at
+> [the bottom](#the-server-pass-2026-08-08). **Not deployed yet** — see
+> [Still open](#still-open).
 
-> **2026-08-08, final — there is a server now.** Everything below this line
-> describes a static site working around not having one. It does now: Cloudflare
-> Pages with Functions, D1 and R2, and Cloudflare Access for approver login. A
-> student submits from the site and it lands in a shared queue; a reviewer signs
-> in, approves, and it is live. No downloads, no email relay, no editing code to
-> publish. Written up at [the bottom](#the-server-pass-2026-08-08). **Still to
-> do:** create the Access application and set `ACCESS_AUD` and
-> `ACCESS_TEAM_DOMAIN`, or the review API stays closed.
+<details>
+<summary>Three earlier designs, all superseded. Kept because each records why
+an approach that looks obvious does not work, and somebody will propose one of
+them again.</summary>
 
-> **2026-08-08, later still — submissions are links, and Forms is gone.**
-> *(Superseded by the pass above.)*
-> Microsoft Forms solved the wrong half of the problem: it gave submissions
-> somewhere to land, but publishing an approved event still meant hand-editing
-> JavaScript, which is the part an office colleague cannot reasonably be asked
-> to do. Submissions now encode themselves into a link that the submitter emails
-> in, the review queue decodes it, and approving produces a ready-made
-> `js/events.js` to drop into the repo. No Forms, no SharePoint, no licence, no
-> hand-edited code. Written up at
-> [the bottom](#the-link-based-pass-2026-08-08). **One thing still needs doing:**
-> set `CONFIG.office.email`.
+> **The functionality pass.** The screens looked finished but mostly did not do
+> anything — the submit form read none of its own fields, review decisions
+> changed nothing, and there was no search, no way to get an event into your own
+> calendar, and no way to link to one. That pass wired them up against
+> localStorage. [Written up below](#the-functionality-pass-2026-08-08).
 
-> **2026-08-08 — the functionality pass.** Everything up to this point was the
-> shape of the app: the layout, the type, the chrome. The screens looked
-> finished but mostly did not do anything — the submit form read none of its own
-> fields, review decisions changed nothing, and there was no search, no way to
-> get an event into your own calendar, and no way to link to one. That pass is
-> [written up below](#the-functionality-pass-2026-08-08). The open items in this
-> document that it closed are marked.
+> **Microsoft Forms.** The submit form handed off to the office's Microsoft Form
+> so responses landed in SharePoint. Solved where submissions go; left publishing
+> as hand-edited JavaScript, and brought a tenant dependency.
+> [Written up below](#the-microsoft-forms-pass-2026-08-08). The reasoning about
+> what is and is not possible against Forms is the part still worth having.
+
+> **Submissions as links.** Each submission encoded itself into a URL the
+> submitter emailed in; the queue decoded it, and approving produced a
+> ready-made `events.js` to drop into the repo. Needed nothing at all, which was
+> its appeal — but submissions arrived in one inbox, the flyer had to travel as
+> an attachment, and pressing Submit did not feel like submitting.
+> [Written up below](#the-link-based-pass-2026-08-08).
+
+</details>
 
 ## Where it lives
 
 | | |
 | --- | --- |
 | Repo | <https://github.com/bengrier/FYE-Calendar> (public) |
-| Live | <https://bengrier.github.io/FYE-Calendar/> — GitHub Pages, `main` / root, HTTPS enforced |
-| Deploy | Every push to `main` republishes automatically, usually within a minute |
+| Live today | <https://bengrier.github.io/FYE-Calendar/> — GitHub Pages, `main` / root. The static, email-based version. |
+| Next | Cloudflare Pages + Functions + D1 + R2, on branch `cloudflare-backend`. **Not deployed yet.** |
+| Accounts | GitHub and Cloudflare are both Ben Grier's personal accounts — see [the open item](#the-hosting-is-personal-and-that-is-now-a-decision) |
 | Origin | Implemented from the Claude Design prototype `Community Calendar.dc.html` (project `969b693a-9fb3-4ad4-ae08-0e5ed698d1f3`), on the Broadsheet design system |
 
-Static site: no build step, no dependencies, no package manager. Scripts are
-classic (non-module) on purpose so the page also opens straight from the
-filesystem. Serve it with `python3 -m http.server 4173`.
+Scripts are classic (non-module), which is why there is still no bundler and no
+build step. They were that way so the page could also be opened straight off the
+filesystem; the server pass ended that, but the simplicity was worth keeping.
 
-## State: everything is committed and live
+## State
 
-The dates, the flyer edits and this document are all on `main` and published.
-Working tree clean as of writing. (The 2026-08-08 functionality pass is a
-separate set of changes on top; see the bottom of this file.)
+`main` holds the static, email-based calendar and is what is live. It works, and
+it should keep serving until the replacement is signed off.
+
+`cloudflare-backend` holds the server rebuild: submissions go straight into a
+database, approvers sign in, approving publishes immediately. Built and tested
+locally against D1 and R2; **nothing is deployed**. See
+[Still open](#still-open) for what remains, and README's "Deploying" for the
+steps.
+
+Working tree clean as of writing.
 
 ### A trap worth knowing about, if you edit a flyer PDF again
 
@@ -188,30 +195,77 @@ PDF stay in step.
 ### Still open
 
 **Nothing is deployed.** Everything is built and tested against local D1 and R2
-through `wrangler pages dev`. The Cloudflare account, the Pages project, the
-database, the bucket and the Access application do not exist yet. README's
-"Deploying" is the list, and step 5 is the one that matters: until `ACCESS_AUD`
-and `ACCESS_TEAM_DOMAIN` are set, the review API refuses every request.
+through `wrangler pages dev`. The Pages project, the database, the bucket and
+the Access application do not exist yet. README's "Deploying" is the list, and
+step 5 is the one that matters: until `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN` are
+set, the review API refuses every request.
 
 **`CONFIG.office.email` is empty.** One line, and it only affects the To: field
 on a reviewer's *Request changes* reply. Nothing depends on it any more.
 
-**The Cloudflare account is a new single point of failure**, exactly like the
-GitHub one. Create it as an account the office owns, or add a second admin
-before there is data in it.
+### The hosting is personal, and that is now a decision
+
+**Decided 2026-08-08: this runs on Ben Grier's own Cloudflare account**, the
+same way it already runs on his own GitHub account. That is a reasonable place
+to start and a bad place to stay, so it is written down here rather than left to
+be discovered.
+
+What it means concretely, once there is real data in it:
+
+- The events database, the flyer bucket and the list of who may approve events
+  all live in one personal account. Nobody else can reach any of it.
+- If that account is lost — leaving CSU, a forgotten password, an unpaid card on
+  a later paid plan — the calendar goes down and the office cannot bring it
+  back. This is different in kind from the GitHub risk: the repo is cloned on
+  disk and could be re-hosted in an afternoon, but the submissions and approvals
+  only exist in D1.
+
+Three things that make that survivable, in order of how much they buy:
+
+1. **Add a second admin to the Cloudflare account** — someone in the office,
+   under Manage Account → Members. Costs nothing, takes a minute, and is the
+   single thing most worth doing.
+2. **Back up the database.** `npx wrangler d1 export fye-calendar --remote
+   --output=backup.sql` produces a file that could rebuild everything. Run it
+   occasionally; keep it somewhere the office can reach.
+3. **Write down where the account is** and who holds it, somewhere the office
+   looks — not only in this file.
+
+None of that blocks deployment. It is what stops a working calendar from having
+a single person as its only dependency.
+
+### Deployment is the next task
+
+It was deliberately not done in the session that built this, because it needs a
+login. Start from README's "Deploying", and note:
+
+- `wrangler.toml` has `database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"`.
+  That is the one placeholder that must be filled in.
+- Do it on this branch, `cloudflare-backend`. `main` still serves the working
+  email-based site on GitHub Pages, and should keep doing so until the new one
+  is signed off.
+- The two GitHub Pages and Cloudflare Pages deployments can run side by side for
+  as long as it takes to be confident. They share a repo but not a branch.
 
 ## Notes for whoever extends this
 
-- `js/events.js` holds the events and nothing else, because it is the file the
-  review queue regenerates and a colleague replaces to publish. `js/data.js` is
-  still the backend seam for everything else. ~~The review queue's `PENDING` and
-  the submit form are UI-only~~ — both are wired through `js/store.js` and
-  persist to localStorage.
-- **The serialiser in `app.js` and the format of `js/events.js` have to stay in
-  step.** If they drift, every publish reformats the whole file and the diff a
-  colleague is meant to read before committing becomes unreadable. There is a
-  check for this: regenerate with an untouched store and the output should be
-  byte-identical to the file in the repo.
+- `public/js/store.js` is the seam. Its reads are **synchronous on purpose** —
+  `app.js` calls them inside render functions — and they answer from a cache
+  that `hydrate()` fills. Adding a read means adding it to the cache, not
+  awaiting a fetch inside a painter.
+- **Two pairs of things have to change together**, or the app will disagree
+  with itself:
+  - `validateDraft` in `public/js/app.js` and `validateSubmission` in
+    `functions/_lib/submission.js`. The first tells someone what is wrong while
+    they type; the second decides. If they drift, the form accepts what the
+    server refuses.
+  - `occurrences` in `public/js/store.js` and in `functions/_lib/submission.js`.
+    The first tells the reviewer how many events approving will create; the
+    second creates them. A mismatch is a nasty surprise at the moment of
+    approval.
+- `GROUPS` in `public/js/data.js` and the `kind = 'fixed'` rows in `seed.sql`
+  mirror each other, so the server can tell a tag picked off a list from one a
+  submitter invented. Change the chips and re-run the seed.
 - Filter semantics worth preserving: an event tagged `All disciplines` answers any
   choice in the discipline group (`openToAll` on that group). It is not one of the
   group's `chips`, so it never appears in the filter bar — but the submit form
@@ -224,8 +278,8 @@ before there is data in it.
   `scroll-behavior`, so it can honour `prefers-reduced-motion`.
 - Assets came from the CSU top-bar reference bundle and the demo event files that
   were in this folder; both were deleted after their contents were copied and
-  renamed into `assets/csu/` and `flyers/`. They are recoverable only from commit
-  `aa229a2` onward — the originals are gone from disk.
+  renamed into `public/assets/csu/` and `public/flyers/`. They are recoverable
+  only from commit `aa229a2` onward — the originals are gone from disk.
 
 ## The functionality pass, 2026-08-08
 
@@ -604,8 +658,26 @@ be very nearly true.
 
 More to maintain than a static site: a database, a bucket, an access policy and
 a deployment. The site no longer opens from the filesystem — that was a
-deliberate property and a server ends it. And the free tiers are generous but
-not guaranteed forever.
+deliberate property and a server ends it. The free tiers are generous but not
+guaranteed forever. And it runs on a personal Cloudflare account, which is
+[its own open item](#the-hosting-is-personal-and-that-is-now-a-decision).
 
 Worth it for what it buys: one shared queue, real logins, working uploads, and
 an interface that no longer has to explain itself.
+
+### If you are picking this up cold
+
+The three passes above this one are all superseded — they are kept because each
+records why an approach that looks obvious does not work, and somebody will
+propose one of them again. If you only read one thing, read
+[Still open](#still-open).
+
+The short version of where the code is:
+
+| | |
+| --- | --- |
+| Run it | `npx wrangler pages dev public`, after the two `d1 execute` lines in README |
+| Data | D1, seeded from `seed.sql`. No localStorage, no content in the JS |
+| API | `functions/api/` — `admin/` is behind Cloudflare Access |
+| The seam | `public/js/store.js`: synchronous reads from a cache, async mutations |
+| Deployed | Not yet. That is the next task |
