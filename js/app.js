@@ -1054,8 +1054,11 @@
     if (!d.title.trim()) errors.title = "Give the event a name.";
     if (!d.org.trim()) errors.org = "Say who is hosting it.";
     if (!d.place.trim()) errors.place = "Say where it is.";
-    if (d.blurb.trim().length < 20) {
-      errors.blurb = "A sentence or two, so a first-year knows what they are walking into.";
+    /* Emptiness is the only thing worth blocking on. A minimum length was
+       rejecting perfectly good one-line descriptions, and the office can ask
+       for more in review far more cheaply than the form can guess. */
+    if (!d.blurb.trim()) {
+      errors.blurb = "Say what happens there.";
     } else if (d.blurb.trim().length > MAX_BLURB) {
       /* Everything is handed over inside a URL, and a long enough one gets
          truncated somewhere between here and Microsoft. This is well inside
@@ -1264,10 +1267,18 @@
     var url = MS.urlFor(answers);
 
     /* Opened from inside the click, which is what keeps a popup blocker out of
-       the way; if one intervenes anyway the done screen offers a plain link. */
+       the way; if one intervenes anyway the done screen offers a plain link.
+
+       Note the missing "noopener" in the feature string. Passing it makes the
+       call return null *on success* — which is spec, and which made every
+       successful handoff report itself as blocked. The reference is severed
+       immediately afterwards instead, which is the same protection. */
     var opened = null;
     try {
-      opened = window.open(url, "_blank", "noopener");
+      opened = window.open(url, "_blank");
+      if (opened) {
+        try { opened.opener = null; } catch (e) { /* cross-origin; harmless */ }
+      }
     } catch (e) { /* treated the same as a blocked window */ }
 
     state.submitted = {

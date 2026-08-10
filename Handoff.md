@@ -333,6 +333,13 @@ cannot know whether anyone pressed Submit on Microsoft's page, so it says the
 submission is not made until they do, and keeps both the link and their answers
 in reach. Nothing is written to the store.
 
+**A trap, if you ever touch that `window.open` call.** Passing `"noopener"` in
+the feature string makes it return `null` *on success* — that is the spec, not a
+browser quirk — so every successful handoff reported itself as blocked and told
+the submitter their browser had stopped it. The opener reference is severed on
+the returned window instead, which is the same protection and leaves the return
+value meaning what it appears to mean.
+
 **Sentinels, not question ids.** Microsoft names its questions `r1a2b3c…`.
 Rather than have somebody read those out of a URL and pair them with fields by
 hand — a job that fails silently — the setup asks them to answer each question
@@ -349,6 +356,9 @@ the tenant — fine for students, and it is why this is not worth working around
 
 **Blurbs are capped at 600 characters.** Everything travels inside a URL. This is
 comfortably inside any limit and a blurb that long was not being read anyway.
+There is no *minimum* beyond non-empty: a 20-character floor was rejecting
+perfectly good one-line descriptions, and the office can ask for more in review
+far more cheaply than the form can guess.
 
 ### The review queue was told the truth
 
