@@ -16,7 +16,7 @@
   var C = window.CalData;
   var S = window.CalStore;   /* the live calendar: seed + everything since */
   var ICS = window.CalIcs;
-  var MS = window.CalMsForm; /* the handoff to the office's Microsoft Form */
+  var SUB = window.CalSubmission; /* submissions encoded into shareable links */
 
   /* ======================================================================
      DOM helpers
@@ -94,6 +94,9 @@
 
     // review queue
     reviewSel: 0,
+    /* Set when a submission link would not decode, so the queue can say so
+       instead of opening on an unexplained empty list. */
+    linkError: false,
     approvedNew: [],
     changesOpen: false,
     feedback: "",
@@ -404,6 +407,8 @@
     var raw = location.hash || "";
     var lower = raw.toLowerCase();
     var event = /^#event\/(.+)$/i.exec(raw);
+    /* Case-sensitive: the payload is base64url and "A" is not "a". */
+    var submission = /^#review\/(.+)$/.exec(raw);
 
     applyingRoute = true;
     state.detailId = null;
@@ -411,7 +416,9 @@
     state.reviewOpen = false;
     state.slideshow = false;
 
-    if (event) {
+    if (submission) {
+      takeSubmissionLink(submission[1]);
+    } else if (event) {
       var id = decodeURIComponent(event[1]);
       var found = S.eventById(id);
       if (found) {
@@ -434,6 +441,48 @@
 
     applyingRoute = false;
     render();
+  }
+
+  /* A submission link, opened. The payload becomes a card in this browser's
+     queue and the reviewer carries on as normal.
+
+     Opening the same link twice — forwarded mail, a second reviewer's reply,
+     a bookmarked tab reloaded — must not queue the same event twice, so the
+     payload itself is the identity. It is the only thing here that is
+     genuinely unique per submission, and it is stable across reloads in a way
+     a generated id would not be. */
+  function takeSubmissionLink(payload) {
+    var sub = SUB.decode(payload);
+
+    /* The payload has been read; drop it from the URL. Otherwise a reload
+       re-runs this, Back walks into it again, and the reviewer is looking at
+       900 characters of base64 in their address bar. replaceState does not
+       fire hashchange, so this cannot re-enter. */
+    try {
+      history.replaceState({ fye: true }, "",
+        location.pathname + location.search + "#review");
+    } catch (e) { /* the URL stays long; nothing else breaks */ }
+
+    if (!sub) {
+      state.reviewOpen = true;
+      state.linkError = true;
+      return;
+    }
+
+    state.reviewOpen = true;
+    state.linkError = false;
+
+    var existing = S.queue().filter(function (q) { return q.payload === payload; })[0];
+    if (existing) {
+      state.reviewSel = S.queue().indexOf(existing);
+      state.note = "Already in the queue — this link had been opened before.";
+      return;
+    }
+
+    sub.payload = payload;
+    var made = S.submit(sub);
+    state.reviewSel = S.queue().indexOf(made);
+    state.note = "";
   }
 
   function openDetail(id) {
@@ -912,20 +961,29 @@
         "#event/" + encodeURIComponent(ev.id);
   }
 
-  function copyLink(ev) {
-    var url = linkTo(ev);
-    var done = function () { toast("Link copied"); };
-    var failed = function () {
-      /* Clipboard access is refused on insecure origins and in some embedded
-         browsers; showing the URL still lets someone copy it by hand. */
-      window.prompt("Copy this link", url);
-    };
-
+  /* Clipboard access is refused on insecure origins and in some embedded
+     browsers, so every path here ends with the text somewhere the person can
+     select it by hand rather than with nothing having happened. */
+  function copy(text, onDone) {
+    var failed = function () { window.prompt("Copy this", text); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(url).then(done, failed);
+      navigator.clipboard.writeText(text).then(onDone, failed);
     } else {
       failed();
     }
+  }
+
+  function copyLink(ev) {
+    copy(linkTo(ev), function () { toast("Link copied"); });
+  }
+
+  /* Confirmation on the button itself, for the overlays — the toast lives on
+     the calendar behind them and would go unseen. */
+  function copyText(text, button, label) {
+    copy(text, function () {
+      button.textContent = "Copied";
+      window.setTimeout(function () { button.textContent = label; }, 1600);
+    });
   }
 
   function detailOverlay(ev) {
@@ -1060,9 +1118,9 @@
     if (!d.blurb.trim()) {
       errors.blurb = "Say what happens there.";
     } else if (d.blurb.trim().length > MAX_BLURB) {
-      /* Everything is handed over inside a URL, and a long enough one gets
-         truncated somewhere between here and Microsoft. This is well inside
-         that, and a blurb this long was not going to be read anyway. */
+      /* The whole submission travels inside a URL, and a long enough one gets
+         wrapped or truncated on its way through a mail client. This is well
+         inside that, and a blurb this long was not going to be read anyway. */
       errors.blurb = "Keep it under " + MAX_BLURB + " characters — that is about a short paragraph.";
     }
 
@@ -1140,25 +1198,33 @@
     return node;
   }
 
-  /* The handoff is not a receipt, and this screen must not read like one. The
-     submission is not made until the submitter presses Submit on Microsoft's
-     page, and this page has no way of learning whether they did — so it says
-     what it actually knows, and keeps the link in reach. */
+  /* Sending is the submitter's own act, not something this page did on their
+     behalf, and the screen says so. It has composed an email and it knows
+     nothing beyond that — so the one instruction it gives is the one that
+     matters: attach the flyer and press send. */
   function submitDone() {
     var handoff = state.submitted;
     var sub = handoff.summary;
+
+    var linkBox = el("input", {
+      type: "text",
+      class: "input input--link",
+      readonly: true,
+      value: handoff.link,
+      onClick: function (e) { e.target.select(); }
+    });
 
     return el("div", { class: "done" }, [
       el("div", { class: "done__kicker", text: "One step left" }),
       el("h3", {
         class: "done__title",
         text: handoff.opened
-          ? "Finish on the CSU form — it opened in a new tab."
-          : "Finish on the CSU form."
+          ? "Send the email — it is written and waiting."
+          : "Send this to the office."
       }),
 
-      /* Reading the answers back is the only confirmation there is that the
-         right thing was filled in — worth more here than another line of
+      /* Reading the submission back is the only confirmation there is that the
+         right thing was captured — worth more here than another line of
          reassurance. */
       el("div", { class: "done__recap" }, [
         el("div", { class: "done__recaptitle", text: sub.title }),
@@ -1177,23 +1243,34 @@
       el("p", {
         class: "done__body",
         text: handoff.opened
-          ? "Every answer is already filled in. Attach your flyer, check it over, and press Submit there — nothing reaches the office until you do."
-          : "Your browser blocked the new tab. Open the form with the link below: every answer is already filled in. Attach your flyer, check it over, and press Submit there."
+          ? "A draft is open in your mail client with everything above already in it. Attach your flyer and press send — nothing reaches the office until you do."
+          : "Your mail client did not open. Send the link below to " +
+            (SUB.office().email || "the office") +
+            ", with your flyer attached. Everything above travels in the link, so there is nothing to retype."
       }),
 
+      el("div", { class: "done__linkrow" }, [
+        el("span", { class: "field__label", text: "Your submission link" }),
+        linkBox,
+        el("button", {
+          type: "button", class: "btn-secondary", text: "Copy",
+          onClick: function (e) {
+            linkBox.select();
+            copyText(handoff.link, e.target, "Copy");
+          }
+        })
+      ]),
+
       el("div", { class: "done__actions" }, [
-        /* A real link, not a scripted re-open: this one works whatever the
-           popup blocker decided. */
+        /* A real link, so it survives whatever the mail handler did. */
         el("a", {
           class: "btn-primary btn-primary--link",
-          href: handoff.url,
-          target: "_blank",
-          rel: "noopener",
-          text: handoff.opened ? "Open the form again" : "Open the CSU form"
+          href: handoff.mailto,
+          text: handoff.opened ? "Open the email again" : "Open the email"
         }),
         /* The draft is deliberately still in state. Someone who spots a wrong
-           room number on Microsoft's page can come back, fix it and hand off
-           again rather than retype the lot. */
+           room number while writing the email can come back, fix it and
+           regenerate rather than retype the lot. */
         el("button", {
           type: "button", class: "btn-secondary", text: "Change something",
           onClick: function () {
@@ -1216,11 +1293,10 @@
     ]);
   }
 
-  /* Everything the Microsoft Form is asked to carry, as the strings it will
-     store. Dates go over as ISO so a column of them sorts and reads the same
-     way for everybody; the repeat rule and the time span go over as the prose
-     the office already reads in the queue. */
-  function answersFrom(d) {
+  /* The draft, as the submission the link carries and the queue reads. The
+     reviewer's prose `time` and the machine-readable `start` both travel,
+     because approving needs the one and reading needs the other. */
+  function submissionFrom(d) {
     var start = decimalFromTimeInput(d.startTime);
     var end = decimalFromTimeInput(d.endTime);
 
@@ -1231,21 +1307,26 @@
     return {
       title: d.title.trim(),
       org: d.org.trim(),
-      date: d.date,
-      time: D.spanLabel(start, end),
-      repeat: C.repeatLabel(d.repeat, d.repeat ? d.repeatUntil : null),
       place: d.place.trim(),
+      date: d.date,
+      start: start,
+      time: D.spanLabel(start, end),
       blurb: d.blurb.trim(),
-      tags: chosen.concat(state.customTags).join(", "),
+      tags: chosen.concat(state.customTags),
+      newTags: state.customTags.filter(function (t) {
+        return S.customTags().indexOf(t) === -1;
+      }),
+      repeat: d.repeat,
+      repeatUntil: d.repeat ? d.repeatUntil : null,
       by: d.by.trim(),
       email: d.email.trim()
     };
   }
 
-  /* Check the draft, then hand off: this page fills the office's Microsoft
-     Form and the submitter presses Submit there. Nothing is stored here and
-     nothing is claimed to have been sent — see js/msform.js for why posting
-     directly is not on offer. */
+  /* Check the draft, then encode it into a link and compose the email that
+     carries it. Nothing is stored here and nothing is claimed to have been
+     sent — the submitter presses send, and the flyer goes with it as an
+     attachment. See js/submission.js. */
   function sendDraft() {
     var d = draft();
     state.errors = validateDraft(d);
@@ -1259,89 +1340,80 @@
       return;
     }
 
-    /* Guarded rather than assumed: the button is not offered while the Form is
-       unlinked, but a draft can outlive a change to CONFIG. */
-    if (!MS.configured()) { renderSubmit(); return; }
+    /* Guarded rather than assumed: the button is not offered while the office
+       address is unset, but a draft can outlive a change to CONFIG. */
+    if (!SUB.configured()) { renderSubmit(); return; }
 
-    var answers = answersFrom(d);
-    var url = MS.urlFor(answers);
+    var sub = submissionFrom(d);
+    var link = SUB.linkFor(sub);
+    var mailto = SUB.mailtoFor(sub, link);
 
-    /* Opened from inside the click, which is what keeps a popup blocker out of
-       the way; if one intervenes anyway the done screen offers a plain link.
-
-       Note the missing "noopener" in the feature string. Passing it makes the
-       call return null *on success* — which is spec, and which made every
-       successful handoff report itself as blocked. The reference is severed
-       immediately afterwards instead, which is the same protection. */
-    var opened = null;
+    /* Assigning location.href is what hands a mailto: to the OS. There is no
+       way to learn whether a mail client actually opened, so this is reported
+       as "a draft is open" only when the assignment itself did not throw —
+       and the link and the mailto are both left on screen either way. */
+    var opened = false;
     try {
-      opened = window.open(url, "_blank");
-      if (opened) {
-        try { opened.opener = null; } catch (e) { /* cross-origin; harmless */ }
-      }
-    } catch (e) { /* treated the same as a blocked window */ }
+      window.location.href = mailto;
+      opened = true;
+    } catch (e) { /* no mail handler; the copyable link is the fallback */ }
 
     state.submitted = {
-      url: url,
-      opened: !!opened,
-      summary: answers,
-      /* The Form is told "Does not repeat" outright, but the recap only has
-         room for what is worth double-checking. */
+      link: link,
+      mailto: mailto,
+      opened: opened,
+      summary: {
+        title: sub.title,
+        org: sub.org,
+        place: sub.place,
+        date: sub.date,
+        time: sub.time,
+        repeat: C.repeatLabel(sub.repeat, sub.repeatUntil)
+      },
+      /* The recap only has room for what is worth double-checking. */
       repeats: !!d.repeat
     };
 
-    /* The draft stays. Until Microsoft has the response there is nothing to
-       throw away, and someone re-reading their own answers on the Form may
+    /* The draft stays. Until the email is actually sent there is nothing to
+       throw away, and someone re-reading their own answers in the draft may
        well come back to change one. */
     state.errors = {};
     renderSubmit();
   }
 
-  /* A file is the one answer a pre-filled link cannot carry, so the flyer is
-     attached on the Microsoft Form itself. Saying so here, next to everything
-     else the submission needs, is what stops someone arriving at that page with
-     the artwork still sitting on their desktop. */
+  /* A file is the one thing a link cannot carry, so the flyer rides on the
+     email as an attachment. Saying so here, next to everything else the
+     submission needs, is what stops someone sending the mail and only then
+     noticing the artwork is still on their desktop. */
   function flyerField() {
-    var cfg = C.CONFIG.submitForm || {};
-
     return el("div", { class: "field" }, [
       el("span", { class: "field__label", text: "Flyer page" }),
       el("div", { class: "notice" }, [
         el("div", {
           class: "notice__lead",
-          text: cfg.flyerNote || "You will attach the flyer on the next step, on the CSU form."
+          text: "Attach the flyer to the email this produces."
         }),
         el("div", {
           class: "notice__body",
-          text: "One page, PDF or image. This is what students and the projector actually see, so make it readable from the back of a room. Have the file to hand before you continue."
+          text: "One page, PDF or image. This is what students and the projector actually see, so make it readable from the back of a room. Events without one still get listed, as a text card."
         })
       ])
     ]);
   }
 
-  /* Shown only when CONFIG.submitForm is not wired up — a setup mistake made
-     once, by whoever connected the Form, and worth naming exactly rather than
-     leaving them to press Send and watch nothing happen. */
+  /* Shown only when CONFIG.office.email is unset — a setup mistake made once,
+     by whoever put this up, and worth naming exactly rather than leaving
+     someone to press the button and watch mail open to nobody. */
   function unlinkedNotice() {
-    var gaps = MS.missingLabels();
-
     return el("div", { class: "alert alert--setup", role: "alert" }, [
-      el("strong", {
-        text: MS.linked()
-          ? "This form is not fully connected to the CSU submission form yet."
-          : "This form is not connected to the CSU submission form yet."
+      el("strong", { text: "This form does not know where to send submissions yet." }),
+      el("p", {
+        class: "alert__body",
+        text: "Nobody can submit an event until CONFIG.office.email in js/data.js holds the First-Year office's address. It is a one-line change; README.md says where."
       }),
       el("p", {
         class: "alert__body",
-        text: MS.linked()
-          ? "The pre-filled link in CONFIG.submitForm is missing " +
-            (gaps.length === 1 ? "one question: " : gaps.length + " questions: ") +
-            gaps.join(", ") + ". Until it carries all of them, submissions cannot be handed off."
-          : "Nobody can submit an event until CONFIG.submitForm.prefillUrl in js/data.js holds the pre-filled link from the office's Microsoft Form. README.md has the ten questions to build and how to get that link."
-      }),
-      el("p", {
-        class: "alert__body",
-        text: "If you were trying to submit an event, email the Common First-Year office instead — they can add it by hand."
+        text: "If you were trying to submit an event, email the Common First-Year office directly — they can add it by hand."
       })
     ]);
   }
@@ -1424,7 +1496,7 @@
     paintTags();
 
     var errorCount = Object.keys(state.errors).length;
-    var ready = MS.configured();
+    var ready = SUB.configured();
 
     return el("div", { class: "submit" }, [
       el("div", { class: "submit__form" }, [
@@ -1529,10 +1601,10 @@
             type: "button",
             class: "btn-primary btn-primary--lg",
             /* The button names what pressing it does. It does not send
-               anything — it opens the CSU form with these answers in it. */
-            text: "Continue to the CSU form",
+               anything — it writes the email the submitter then sends. */
+            text: "Write the email",
             disabled: ready ? null : true,
-            title: ready ? null : "The CSU submission form is not connected yet",
+            title: ready ? null : "There is no office address to send to yet",
             onClick: sendDraft
           }),
           el("button", { type: "button", class: "btn-secondary btn-secondary--lg", text: "Cancel", onClick: closeSubmit })
@@ -1540,9 +1612,9 @@
       ]),
 
       el("aside", { class: "sidenote" }, [
-        el("div", { class: "kicker", text: "Before you continue" }),
+        el("div", { class: "kicker", text: "Before you send" }),
         el("div", { class: "sidenote__rule" }),
-        el("p", { text: "This page checks your answers, then opens the CSU submission form with all of them filled in. You attach the flyer and press Submit there." }),
+        el("p", { text: "This page checks your answers and writes the email for you. Everything you type travels inside a link in that email, so the office has nothing to retype — but you do have to attach the flyer and press send yourself." }),
         el("p", { text: "Every submission is reviewed by the First-Year team before it appears. Please allow for up to 3 business days for approval." }),
         el("p", { text: "Events without a flyer still get listed, but they show a placeholder card and are easier to scroll past." })
       ])
@@ -1638,8 +1710,9 @@
     var where = made.length === 1
       ? "on " + D.longDayLabel(made[0].date)
       : "across " + made.length + " dates";
-    afterDecision("Approved — “" + sub.title + "” is on the calendar " + where +
-      ". Tell " + sub.by + " yourself: nothing here emails anybody.");
+    afterDecision("Approved — “" + sub.title + "” is on this browser's calendar " +
+      where + ". Download events.js above to publish it, and tell " + sub.by +
+      " yourself: nothing here emails anybody.");
   }
 
   function declineCurrent(sub) {
@@ -1681,13 +1754,143 @@
       "&body=" + encodeURIComponent(body);
   }
 
+  /* ----------------------------------------------------------------------
+     Publishing
+
+     The last step of the workflow, and the only one that leaves this page:
+     approving puts an event on this browser's calendar, and publishing means
+     getting it into the repository. Rather than ask a colleague to hand-edit
+     JavaScript — where a missing comma is a blank calendar and no error
+     message — the queue writes the whole of js/events.js and hands it over as
+     a download. Publishing is then dropping one file into GitHub.
+
+     The serialiser below has to keep producing what scripts/extract-events.js
+     produced, or every publish reformats the file and the diff becomes
+     unreadable. One property per line, in a fixed order, is chosen for exactly
+     that: a new event is a clean block of added lines in the GitHub diff a
+     reviewer looks at before committing.
+     ---------------------------------------------------------------------- */
+
+  var EVENT_KEYS = ["id", "date", "start", "time", "title", "org", "place",
+                    "flyer", "blurb", "tags", "temporary"];
+
+  function jsLiteral(v) {
+    if (v === null || v === undefined) return "null";
+    if (typeof v === "number" || typeof v === "boolean") return String(v);
+    if (Array.isArray(v)) return "[" + v.map(jsLiteral).join(", ") + "]";
+    return JSON.stringify(String(v));
+  }
+
+  var EVENTS_HEADER = [
+    "/* Every event on the calendar.",
+    "",
+    "   This file holds nothing but the list, and the review queue regenerates it",
+    "   whole: approve a submission, press \"Download events.js\", and drop the result",
+    "   in here. That is the entire publishing step — there is no other file to",
+    "   touch and no syntax to get right by hand.",
+    "",
+    "   `temporary: true` marks placeholder content written to build against. Those",
+    "   entries carry a Sample label on the calendar and a line above the grid says",
+    "   so; delete them and the notice removes itself. Real events do not carry the",
+    "   flag.",
+    "",
+    "   `start` is the start hour as a decimal (17.5 = 5:30 pm) and is used only for",
+    "   ordering within a day and for the morning/afternoon/evening tag. `flyer` is",
+    "   a key into FLYERS in data.js, or null. */",
+    "window.CalEvents = ["
+  ].join("\n");
+
+  function eventsFileText() {
+    var body = S.events().map(function (ev) {
+      var lines = EVENT_KEYS
+        .filter(function (k) { return !(k === "temporary" && !ev.temporary); })
+        .map(function (k) { return "    " + k + ": " + jsLiteral(ev[k]); });
+      return "  {\n" + lines.join(",\n") + "\n  }";
+    }).join(",\n");
+
+    return EVENTS_HEADER + "\n" + body + "\n];\n";
+  }
+
+  function downloadEventsFile() {
+    var blob = new window.Blob([eventsFileText()], {
+      type: "text/javascript;charset=utf-8"
+    });
+    var url = window.URL.createObjectURL(blob);
+    var a = el("a", { href: url, download: "events.js" });
+
+    /* Must be in the document for the click to count in some browsers, and
+       the object URL is released on the next turn rather than immediately —
+       revoking synchronously can cancel the download that just started. */
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.setTimeout(function () { window.URL.revokeObjectURL(url); }, 0);
+  }
+
+  /* Only once something has actually been approved. A queue with unreviewed
+     submissions in it makes the store dirty without changing a single event,
+     and a bar reading "0 approved events are not published yet" above an
+     untouched calendar is worse than no bar at all. */
+  function publishBar() {
+    var all = S.events();
+    var added = all.filter(function (ev) { return ev.fromSubmission; }).length;
+    if (!added) return null;
+
+    return el("div", { class: "publish" }, [
+      el("div", { class: "publish__text" }, [
+        el("strong", {
+          text: added === 1
+            ? "1 approved event is not published yet."
+            : added + " approved events are not published yet."
+        }),
+        " They are on this browser's calendar only. Download the file and put " +
+        "it in the repository to put them on the live site."
+      ]),
+      el("button", {
+        type: "button", class: "btn-primary", text: "Download events.js",
+        onClick: function () {
+          downloadEventsFile();
+          state.note = "events.js downloaded — " + all.length +
+            " events. Replace js/events.js in the repository with it.";
+          renderReview();
+        }
+      })
+    ]);
+  }
+
+  /* Links get mangled: wrapped by a mail client, truncated by a chat window,
+     copied without their tail. The distinction that matters to the reviewer is
+     between "this link is broken" and "there is nothing here", so they know to
+     ask for it again rather than assume the submitter never sent it. */
+  function badLinkNotice() {
+    return el("div", { class: "done" }, [
+      el("div", { class: "done__kicker", text: "Unreadable link" }),
+      el("h3", { class: "done__title", text: "That submission link did not open." }),
+      el("p", {
+        class: "done__body",
+        text: "Most often the link was cut short on its way here — mail clients and chat windows both wrap long URLs, and only part of it arrived. Ask for it again, pasted as a link rather than typed, or have the submitter use Copy on the confirmation screen."
+      }),
+      el("p", {
+        class: "done__body",
+        text: "Nothing has been lost: submissions are only read from links, never stored anywhere in between, so the submitter still has theirs."
+      }),
+      el("div", { class: "done__actions" }, [
+        el("button", {
+          type: "button", class: "btn-primary", text: "Go to the queue",
+          onClick: function () { state.linkError = false; renderReview(); }
+        }),
+        el("button", { type: "button", class: "btn-secondary", text: "Back to calendar", onClick: closeReview })
+      ])
+    ]);
+  }
+
   function reviewEmpty() {
     return el("div", { class: "done" }, [
       el("div", { class: "done__kicker", text: "Queue clear" }),
       el("h3", { class: "done__title", text: "Nothing waiting on you." }),
       el("p", {
         class: "done__body",
-        text: "Every submission here has been decided. New submissions do not arrive here — they go to the Microsoft Form and land in SharePoint, where the office reads them."
+        text: "Every submission here has been decided. New ones arrive by opening the link a submitter emails you — there is nothing to poll and nothing to log in to."
       }),
       /* The last decision is the only record of what just happened, so it
          outlives the card it was made on. */
@@ -1723,6 +1926,10 @@
   }
 
   function reviewBody() {
+    /* Before the empty check: a link that would not decode has to say so even
+       when — especially when — there is nothing else in the queue. */
+    if (state.linkError) return badLinkNotice();
+
     var sub = currentSubmission();
     if (!sub) return reviewEmpty();
 
@@ -1913,6 +2120,7 @@
     }
 
     if (reviewNode) {
+      fill(one("[data-publish]", reviewNode), publishBar());
       fill(one("[data-review-body]", reviewNode), reviewBody());
       return;
     }
@@ -1923,18 +2131,18 @@
           type: "button", class: "btn-brand btn-brand--ghost btn-brand--sm",
           text: "Back to calendar", onClick: closeReview
         })),
-      /* Submissions now go to Microsoft Forms, so nothing new arrives in this
-         queue — it holds the seeded examples and still publishes them onto the
-         calendar. Said once, at the top, rather than left for someone to work
-         out from an empty queue. */
+      /* Approving changes what this browser shows, not what the site serves.
+         That gap is the one thing about this screen someone could get wrong,
+         so it is stated at the top rather than left to be discovered after a
+         reviewer wonders why students cannot see the event. */
       el("div", { class: "reviewnote" }, [
-        el("strong", { text: "Submissions no longer arrive here." }),
-        " Since the submit form hands off to the office's Microsoft Form, new " +
-        "events land in SharePoint and the office reads them there. What is " +
-        "below is the seeded queue: approving still publishes onto this " +
-        "browser's calendar, which is useful for trying the flow out and not " +
-        "much else."
+        el("strong", { text: "Approving is not publishing." }),
+        " Submissions arrive as links, and approving one puts it on the " +
+        "calendar in this browser so you can see exactly what students would. " +
+        "It reaches the live site when you press Download events.js and put " +
+        "that file in the repository \u2014 README.md has the steps."
       ]),
+      el("div", { "data-publish": true }, publishBar()),
       el("div", { "data-review-body": true }, reviewBody())
     ]);
     overlays.appendChild(reviewNode);
@@ -1943,6 +2151,7 @@
   function openReview() {
     if (!state.reviewOpen) focusBeforeOverlay = document.activeElement;
     state.reviewOpen = true;
+    state.linkError = false;
     state.note = "";
     render();
   }

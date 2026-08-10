@@ -23,9 +23,9 @@ webfont and flyer PDFs behave better over HTTP.
 | --- | --- |
 | Calendar — week or month grid, searched and filtered | the page itself |
 | Event detail — flyer, tags, add-to-calendar, shareable link | click any event |
-| Submit an event — checked here, filed on the office's Microsoft Form | **Submit an Event** in the header, or `#submit` |
+| Submit an event — checked here, sent as a link by email | **Submit an Event** in the header, or `#submit` |
 | Slideshow for lobby screens and lecture halls | **Slide Show**; arrows/space step, Esc exits |
-| Review queue (office only, no longer fed by submissions) | **Shift+R**, or `#review` on the URL |
+| Review queue (office only) | a submission link, **Shift+R**, or `#review` |
 
 The showcase above the grid cycles through whatever is currently in view, in the
 order it happens; clicking a row in the running order jumps to it. It holds still
@@ -44,25 +44,36 @@ while a dialog is open and while the tab is in the background.
 
 `#event/<id>` opens an event and moves the calendar to its week, which makes
 every event linkable — **Copy link** in the detail dialog puts that URL on the
-clipboard. `#submit`, `#review` and `#slideshow` address the overlays. Opening
-any of them pushes one history entry, so the browser's Back button closes them;
-moving between events replaces rather than pushes, so Back never has to be
-pressed twice.
+clipboard. `#submit`, `#review` and `#slideshow` address the overlays.
+
+`#review/<payload>` is a submission link: the payload is a whole submission,
+base64url-encoded. Opening one decodes it into the queue and then rewrites the
+URL to plain `#review`, so a reload does not re-run it and the address bar does
+not carry 900 characters of base64. Opening the same link twice is harmless —
+the payload is the submission's identity, so it is recognised rather than
+queued again.
+
+Opening an overlay pushes one history entry, so the browser's Back button
+closes it; moving between events replaces rather than pushes, so Back never has
+to be pressed twice.
 
 ## Layout
 
 - `index.html` — page shell and static chrome. Dynamic regions are marked with
   `data-stage`, `data-cur`, `data-countdown`, `data-reel` and `data-range`; both
   the page and the slideshow overlay expose them, so one painter feeds both.
-- `js/data.js` — the seed: events, flyers, filter groups, the starting queue and
-  `CONFIG`. This is the seam where a backend goes: keep the shapes, swap the
-  literals for a fetch, and nothing above it changes.
-- `js/store.js` — the live calendar. The seed plus every approval made in this
-  browser, persisted to localStorage. `app.js` reads events, the queue, tags and
-  flyers from here, never from `data.js` directly.
-- `js/msform.js` — the handoff to the office's Microsoft Form: which questions
-  it carries and how a pre-filled link is built. See "Connecting the Microsoft
-  Form" below.
+- `js/events.js` — every event, and nothing else. This is the file the review
+  queue regenerates and the one a colleague replaces to publish; see
+  "Publishing an event" below. Nothing else in the repo has to be touched to
+  put an event on the calendar.
+- `js/data.js` — flyers, filter groups, the starting queue and `CONFIG`. The
+  seam where a backend goes: keep the shapes, swap the literals for a fetch,
+  and nothing above it changes.
+- `js/store.js` — the live calendar. `events.js` plus every submission and
+  approval made in this browser, persisted to localStorage. `app.js` reads
+  events, the queue, tags and flyers from here, never from `data.js` directly.
+- `js/submission.js` — how a submission is encoded into a link and decoded back
+  out, and the email that carries it.
 - `js/dates.js` — Monday-first, whole-day, local-time date helpers, plus the
   parser that reads an end time back out of a prose time range.
 - `js/ics.js` — iCalendar export.
@@ -73,88 +84,86 @@ pressed twice.
 
 ## Submitting an event
 
-The form on this site collects and checks the submission; the office's Microsoft
-Form receives it. Pressing **Continue to the CSU form** validates every field and
-then opens that Form with all ten answers already filled in — the submitter
-attaches the flyer, checks it over and presses Submit there. The response lands
-in the office's SharePoint with no server here, no credentials in this code and
-no public endpoint to abuse.
+There is no server here and no third-party form. A submission is encoded into
+the URL itself: the submit form checks every field, packs the answers into a
+link, and writes an email carrying that link to the office. The submitter
+attaches their flyer and presses send.
 
-The handoff is not a receipt, and the page does not pretend otherwise: it has no
-way of knowing whether the submitter finished, so it says the submission is not
-made until they press Submit, and keeps the link and their answers in reach.
+The office opens the link. The review queue decodes it straight back into a
+submission — nothing to retype, nothing stored anywhere in between, nothing to
+license, and no public endpoint for anyone to abuse.
 
-Why not post directly: Microsoft Forms has no public submission API — the
-endpoint its own front end uses is CORS-blocked and token-gated, and anything
-built on it would break the first time Microsoft changed it. Posting straight
-into SharePoint instead needs either a Power Automate HTTP trigger (a premium
-connector, and its URL would sit in public JS on a public repo) or an Entra app
-registration and a token. The handoff needs none of that.
+A link runs to about 400–900 characters, which is comfortably inside every
+practical limit. If one arrives truncated — mail clients and chat windows both
+wrap long URLs — the queue says so rather than opening a half-filled card, and
+the submitter still has theirs.
 
-### Connecting the Microsoft Form
+The flyer is the one thing a link cannot carry, which is why this is an email
+and not just a copied link. It rides along as an attachment, and the office
+puts it in `flyers/` when they publish.
 
-Until this is done the submit form says so plainly and its button is disabled.
-It is one paste.
+This is not a security boundary and does not try to be. Anyone who reads
+`js/submission.js` can hand-craft a submission link, which buys them a card in a
+queue that a human still has to approve.
 
-1. In Microsoft Forms, build a form with these ten questions, all **text**, in
-   this order. Text rather than Date or Choice so a pre-filled answer can never
-   be rejected for not matching an expected format:
+### Before anyone can submit
 
-   | # | Question | Answer it with |
-   | --- | --- | --- |
-   | 1 | Event title | `FYE_TITLE` |
-   | 2 | Hosting club or organization | `FYE_ORG` |
-   | 3 | Date | `FYE_DATE` |
-   | 4 | Time | `FYE_TIME` |
-   | 5 | Repeats | `FYE_REPEAT` |
-   | 6 | Location | `FYE_PLACE` |
-   | 7 | What happens there | `FYE_BLURB` |
-   | 8 | Tags | `FYE_TAGS` |
-   | 9 | Your name | `FYE_NAME` |
-   | 10 | CSU email | `FYE_EMAIL` |
+Set `CONFIG.office.email` in [`js/data.js`](js/data.js) to the First-Year
+office's address. Until it is set the submit form says so plainly and its button
+is disabled, rather than composing mail to nobody.
 
-   Add a **file upload** question for the flyer as well. It cannot be pre-filled
-   — that is the one answer that has to be given on Microsoft's page — so leave
-   it out of the steps below. File upload requires the responder to be signed in
-   to the CSU tenant, which students already are.
+## Reviewing and publishing
 
-2. Turn on **Enable pre-filled answers**, then `...` → **Get pre-filled URL**.
-   Answer each of the ten questions with its sentinel from the table — literally
-   `FYE_TITLE` in the title box, and so on — and copy the link it gives you.
+Open a submission link, press **Shift+R**, or use `#review`.
 
-3. Paste that link into `CONFIG.submitForm.prefillUrl` in
-   [`js/data.js`](js/data.js).
+Approving puts the event on **this browser's** calendar so you can see exactly
+what students would. It does not touch the live site — that is deliberate, and
+the queue says so at the top, because it is the one thing about this screen
+someone could get wrong.
 
-Pairing by sentinel is why step 2 looks odd: Microsoft names its questions
-`r1a2b3c…`, and matching those to fields by hand is the kind of job that goes
-wrong silently. Filling each box with a word the code recognises does that
-matching for you. If the pasted link is missing any of them, the submit form
-names exactly which questions are unwired rather than dropping them quietly.
+**Request changes** composes a reply and opens it in your own mail client, with
+the submission quoted underneath. Nothing on this page sends mail; approving and
+declining tell you to contact the submitter yourself.
 
-Changing the questions later means redoing step 2 — the ids change. The
-sentinels themselves live in `SENTINELS` in [`js/msform.js`](js/msform.js).
+### Publishing an event
 
-## Reviewing
+This is the whole of it, and it needs no terminal and no git commands:
 
-Since submissions go to Microsoft Forms, the office reads them in SharePoint,
-and approved events are added to `EVENTS` in `js/data.js`. The in-app review
-queue (**Shift+R**) is no longer fed by anything and says so at the top; it
-still holds the seeded examples, and approving one still publishes it onto this
-browser's calendar, which is useful for trying the flow out and not much else.
+1. Approve the submission.
+2. Press **Download events.js**.
+3. Go to [`js/events.js`](js/events.js) on github.com, press the pencil, select
+   all, and paste in the downloaded file. Or drag the file into the repository
+   through the web UI — same result.
+4. Write a line saying what you added, and commit.
 
-Nothing on this page sends mail. **Request changes** composes the reply and
-opens it in the reviewer's own mail client, where they send it themselves;
-approving and declining tell the reviewer, in as many words, to contact the
-submitter. **Reset this browser's submissions** appears under the toolbar once
-anything has been changed, and puts the calendar back to what it ships with.
+The site rebuilds in about a minute.
+
+The generated file is byte-identical to the one in the repo apart from the
+events you added, so the diff GitHub shows before you commit is exactly the new
+event and nothing else. Read it — that diff is the last check before students
+see it.
+
+If the event has a flyer, add the image to `flyers/` the same way, register it
+in `FLYERS` in `js/data.js`, and set the event's `flyer` key to match.
+
+**Anything already published stays published.** The download always contains the
+whole calendar, so replacing the file never drops events someone else added —
+unless two people publish from different browsers at the same time, in which
+case whoever commits second overwrites the first. With one office doing this a
+few times a week that is theoretical, but it is the reason to publish soon after
+approving rather than banking a week of them.
 
 ## The seeded events are placeholders
 
-Every event in `js/data.js` is invented — written to build and demonstrate
-against. They are flagged `temporary` in one pass at the bottom of the `EVENTS`
-array, which marks each tile **Sample**, badges the event dialog, and puts a
-line above the grid saying so. Add real events without the flag and the line
-counts what is left; empty `EVENTS` and delete the loop, and it disappears.
+Every event in [`js/events.js`](js/events.js) is invented — written to build and
+demonstrate against — and carries `temporary: true`. That marks each tile
+**Sample**, badges the event dialog, and puts a line above the grid saying so,
+worded from a live count: "every event on this calendar" while they all are,
+"23 events are placeholder data" as real ones arrive, and nothing once the last
+one goes.
+
+Real events do not carry the flag; the publisher never adds it. To clear the
+placeholders, delete the flagged entries — the notice removes itself.
 
 ## Configuration
 
@@ -164,11 +173,9 @@ counts what is left; empty `EVENTS` and delete the loop, and it disappears.
 - `defaultView` — `"week"` or `"month"`.
 - `today` — the real current date. Pin it to an ISO string (`"2026-04-27"`) if
   you want the calendar to open somewhere specific for a demo.
-- `submitForm.prefillUrl` — the pre-filled link from the office's Microsoft
-  Form. Empty until someone follows "Connecting the Microsoft Form" above; while
-  it is, nobody can submit an event.
-- `submitForm.flyerNote` — the line the submit form shows where the upload used
-  to be, telling submitters the flyer is attached on the next screen.
+- `office.email` — where submissions are sent. Empty until someone sets it, and
+  while it is, nobody can submit an event.
+- `office.name` — how the office is referred to in the copy.
 
 The seeded events in `js/data.js` are a sample semester running Aug 3 – Sep 11,
 2026. When a view has nothing in it the showcase collapses to one line that says

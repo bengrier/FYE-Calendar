@@ -148,6 +148,9 @@ window.CalStore = (function () {
       email: draft.email,
       flyer: draft.flyer || null,
       flyerImage: draft.flyerImage || null,
+      /* The encoded link this arrived on, kept as the submission's identity so
+         opening the same link twice does not queue it twice. */
+      payload: draft.payload || null,
       submitted: "just now",
       submittedAt: Date.now()
     };

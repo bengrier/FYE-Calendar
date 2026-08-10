@@ -5,15 +5,22 @@ which covers how to run the app and how the code is laid out. This file covers
 what state the work is in, what is deliberately the way it is, and what is still
 open.
 
-> **2026-08-08, later — submissions go to Microsoft Forms.** The last thing the
-> interface claimed but did not do was email anybody, and that needed a server.
-> It now needs one less: the submit form still collects and checks everything,
-> then hands off to the office's Microsoft Form, so responses land in SharePoint
-> and Microsoft does the notifying. The seeded events are also flagged as
-> placeholders. Written up at [the bottom](#the-microsoft-forms-pass-2026-08-08).
-> **One thing is not finished and cannot be by me:** somebody has to build that
-> Form in CSU's tenant and paste its pre-filled link into `CONFIG`. Until then
-> the submit form says so and its button is disabled.
+> **2026-08-08, later — submissions go to Microsoft Forms.** *(Superseded the
+> same day; see the note below. Left in place because the reasoning about what
+> is and is not possible against Forms is still worth having.)* The submit form
+> hands off to the office's Microsoft Form so responses land in SharePoint.
+> Written up at [the bottom](#the-microsoft-forms-pass-2026-08-08).
+
+> **2026-08-08, later still — submissions are links, and Forms is gone.**
+> Microsoft Forms solved the wrong half of the problem: it gave submissions
+> somewhere to land, but publishing an approved event still meant hand-editing
+> JavaScript, which is the part an office colleague cannot reasonably be asked
+> to do. Submissions now encode themselves into a link that the submitter emails
+> in, the review queue decodes it, and approving produces a ready-made
+> `js/events.js` to drop into the repo. No Forms, no SharePoint, no licence, no
+> hand-edited code. Written up at
+> [the bottom](#the-link-based-pass-2026-08-08). **One thing still needs doing:**
+> set `CONFIG.office.email`.
 
 > **2026-08-08 — the functionality pass.** Everything up to this point was the
 > shape of the app: the layout, the type, the chrome. The screens looked
@@ -162,34 +169,36 @@ PDF stay in step.
    these flyers stay, since it is real people's contact channels on a public site.
 4. ~~**The seeded events are placeholder content.**~~ Still true, and now said
    out loud — see [the placeholder flag](#the-seeded-events-say-they-are-seeded).
-5. ~~**Nothing is emailed.**~~ Closed by moving submissions to Microsoft Forms;
-   nothing in the interface now claims to send mail. See below.
+5. ~~**Nothing is emailed.**~~ Nothing in the interface claims to send mail. The
+   submit form and **Request changes** both compose a message and hand it to the
+   sender's own mail client, which is honest and needs no server.
+6. ~~**The review queue is orphaned.**~~ Closed by the link-based pass: it is fed
+   again, by submission links, and it is where publishing happens.
 
-### Still open, and needing someone with a CSU login
+### Still open
 
-**The Microsoft Form does not exist yet.** Everything on this side is built and
-tested against a stand-in link; `CONFIG.submitForm.prefillUrl` in `js/data.js` is
-empty. README's "Connecting the Microsoft Form" is the ten-question build and the
-one paste. Until it is done nobody can submit an event, and the form says exactly
-that rather than pretending.
+**`CONFIG.office.email` is empty.** One line in `js/data.js`, and nobody can
+submit an event until it is set — the form says exactly that rather than
+composing mail to nobody. It is the only thing between here and a working
+submission path.
 
-**The review queue is orphaned, and its fate is a decision, not a task.** Since
-submissions go to SharePoint, nothing new arrives in it; it holds the seeded
-examples, says so at the top, and still publishes them onto the local calendar.
-Two honest options: delete it — `js/store.js`, the queue rendering and `PENDING`
-go with it, and `app.js` loses roughly a third of its bulk — or keep it as a way
-to try the publish flow. It was left in place because deleting a third of the app
-on an assumption is worse than leaving something clearly labelled. `S.submit()`
-in `js/store.js` is now unused either way.
+**Nobody has published an event end to end yet.** The flow is built and tested
+in a browser, but no colleague has actually taken a download and put it in the
+repo. That first run is where the README either holds up or does not, and it is
+worth doing with someone watching.
 
 ## Notes for whoever extends this
 
-- `js/data.js` is the backend seam. Keep the shapes, swap the literals for a
-  fetch, and nothing above it needs to change. ~~The review queue's `PENDING` and
-  the submit form are UI-only~~ — as of 2026-08-08 both are wired through
-  `js/store.js` and persist to localStorage; ~~only the emailing is still
-  notional~~ and later that day the submit form was rerouted to Microsoft Forms,
-  so it no longer touches the store at all.
+- `js/events.js` holds the events and nothing else, because it is the file the
+  review queue regenerates and a colleague replaces to publish. `js/data.js` is
+  still the backend seam for everything else. ~~The review queue's `PENDING` and
+  the submit form are UI-only~~ — both are wired through `js/store.js` and
+  persist to localStorage.
+- **The serialiser in `app.js` and the format of `js/events.js` have to stay in
+  step.** If they drift, every publish reformats the whole file and the diff a
+  colleague is meant to read before committing becomes unreadable. There is a
+  check for this: regenerate with an untouched store and the output should be
+  byte-identical to the file in the repo.
 - Filter semantics worth preserving: an event tagged `All disciplines` answers any
   choice in the discipline group (`openToAll` on that group). It is not one of the
   group's `chips`, so it never appears in the filter bar — but the submit form
@@ -380,12 +389,105 @@ events are placeholder data" as real ones arrive, and removes itself when the
 last one goes. Magenta throughout, deliberately: placeholder content should not
 look like part of the furniture.
 
-To strip them: empty `EVENTS` and delete the `forEach` under it.
+To strip them: empty `EVENTS` and delete the `forEach` under it. *(The flag moved
+into `js/events.js` in the pass below and is now written per entry, so stripping
+is deleting the flagged entries.)*
 
 ### Still not real, honestly this time
+
+*(Superseded by the pass below.)*
 
 No mail is sent from this page, and nothing says it is. The office is notified by
 Microsoft when a response arrives, and replies from Outlook.
 
 The review queue's persistence is still per-browser, which no longer matters much
 now that nothing lands in it.
+
+## The link-based pass, 2026-08-08
+
+### Why Microsoft Forms came out again, hours after going in
+
+Forms answered the question it was asked — where do submissions land — and left
+the harder one untouched. Publishing an approved event still meant opening
+`js/data.js`, writing a JavaScript object literal by hand and pushing it, where a
+missing comma produces a blank calendar and no error message. That is not
+something an office colleague can be asked to do, so the office would have stayed
+dependent on one person, which was the thing the whole exercise was meant to fix.
+
+Once you notice that publishing has to be made safe regardless, Forms stops
+paying for itself. It brought a tenant dependency, a setup procedure with
+fragile question ids, a file-upload question that forced responders to sign in,
+and a response workbook nothing could read anyway. Dropping it removed all of
+that and cost nothing that was not replaced.
+
+The reasoning about what is and is not possible against Forms is preserved in the
+[pass above](#the-microsoft-forms-pass-2026-08-08), because someone will suggest
+it again.
+
+### Submissions are links
+
+`js/submission.js`. A submission is packed into short keys, JSON-encoded and
+base64url'd into `#review/<payload>` — about 400–900 characters, comfortably
+inside every practical limit. The submitter emails that link to the office; the
+queue decodes it back into a submission on open.
+
+Details that matter:
+
+- **base64url, not base64.** The standard alphabet's `+` and `/` are legal in a
+  fragment but survive copy-paste through mail clients badly, and `=` invites
+  something to truncate it.
+- **The payload is the submission's identity.** Forwarded mail, a second
+  reviewer's reply, a reloaded tab — opening the same link twice must not queue
+  the same event twice, and the payload is the only thing genuinely unique per
+  submission that is also stable across reloads.
+- **The URL is rewritten to plain `#review` on arrival**, so a reload does not
+  re-run the decode and the address bar does not carry 900 characters of base64.
+  `replaceState` does not fire `hashchange`, so this cannot re-enter.
+- **A link that will not decode says so.** Mail clients and chat windows both
+  wrap long URLs, so truncation is the likely failure and the reviewer needs to
+  tell "this link is broken" from "there is nothing here" — one means ask for it
+  again, the other means nobody sent anything.
+- **This is not a security boundary.** Anyone who reads the file can hand-craft a
+  submission link, which buys them a card in a queue a human still approves. That
+  was a deliberate call, not an oversight.
+
+The flyer is the one thing a link cannot carry, which is why the submission goes
+out as an email rather than a bare link: it rides along as an attachment. Email
+is the file transport every submitter already has, and the office has to put the
+artwork in `flyers/` at approval time either way.
+
+### Publishing is a download
+
+`js/events.js` now holds the events and nothing else, and the review queue
+regenerates the whole file: approve, press **Download events.js**, drop it into
+GitHub through the web UI. No terminal, no git commands, no JavaScript to write.
+
+The serialiser writes one property per line in a fixed order, which is verbose
+and deliberate — a new event is then a clean block of added lines in the diff
+GitHub shows before committing, and that diff is the last check before students
+see anything. **It is byte-identical to the checked-in file for an untouched
+calendar**, verified, so a publish never reformats and every real diff is only
+the new event.
+
+The download always contains the whole calendar, so replacing the file never
+drops events someone else added — unless two people publish from different
+browsers at once, where the second commit wins. With one office publishing a few
+times a week that is theoretical, and it is the reason to publish soon after
+approving rather than banking a week of them.
+
+### What the queue says now
+
+It is fed again, so the copy is true again. The one thing someone could get
+wrong is that approving changes their own browser and not the live site, so that
+is stated at the top rather than left to be discovered after a reviewer wonders
+why students cannot see the event.
+
+### Still not real
+
+No mail is sent from this page. The submit form and **Request changes** both
+compose a message and hand it to the sender's own mail client; a human presses
+send. That is now a design decision rather than a gap — it needs no server, and
+a message a person has read before sending is better than one a machine sent.
+
+The queue is per-browser, which is correct here: a submission link is addressed
+to whoever is reviewing it, and the calendar it publishes to is the repo.

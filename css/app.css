@@ -1007,6 +1007,24 @@ textarea:focus-visible,
   box-shadow: var(--shadow-tile);
   max-width: 34em;
 }
+.done__linkrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 26px;
+}
+.done__linkrow .field__label { flex: 1 0 100%; }
+/* Monospaced and scrollable: it is 900-odd characters of base64, and it exists
+   to be selected and copied, not read. */
+.input--link {
+  flex: 1 1 22em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
 .done__recaptitle { font-size: 21px; font-weight: 700; line-height: 1.2; }
 .done__recapline { font-size: 16px; color: var(--ink-65); margin-top: 4px; }
 
@@ -1154,6 +1172,24 @@ textarea.input { font-size: 17px; line-height: 1.5; resize: vertical; }
   line-height: 1.5;
   max-width: 68em;
 }
+
+/* The publishing step. Accent-tinted rather than grey: unlike the note above
+   it, this is something the reviewer still has to do. */
+.publish {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+  margin: 16px 40px 0;
+  padding: 16px 20px;
+  background: var(--accent-tint);
+  border-left: 3px solid var(--color-accent);
+  font-size: 16px;
+  line-height: 1.5;
+  max-width: 68em;
+}
+.publish__text { flex: 1 1 24em; }
+.publish .btn-primary { flex: none; }
 
 .review {
   padding: 34px 40px 80px;
@@ -1443,7 +1479,8 @@ textarea.input { font-size: 17px; line-height: 1.5; resize: vertical; }
   .toolbar__range { font-size: 24px; }
   .submit,
   .review { padding-left: 18px; padding-right: 18px; }
-  .reviewnote { margin-left: 18px; margin-right: 18px; }
+  .reviewnote,
+  .publish { margin-left: 18px; margin-right: 18px; }
   .week__grid { grid-template-columns: minmax(0, 1fr); }
   .submit__times,
   .submit__who { grid-template-columns: minmax(0, 1fr); }
