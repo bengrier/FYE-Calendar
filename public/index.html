@@ -107,6 +107,21 @@
     <div id="calendar"></div>
 
   </div>
+
+  <!-- The office's way in. This is an absolute URL to another host on purpose:
+       Cloudflare Access covers fye-calendar.pages.dev and cannot cover this
+       domain, whose DNS is not on Cloudflare. A reviewer sent to /review here
+       would reach the queue with no way to sign in.
+
+       If the Access application ever moves to a different hostname, this link
+       and REVIEW_HOST in wrangler.toml both have to follow it. -->
+  <footer class="sitefoot">
+    <div class="rule-thin"></div>
+    <div class="sitefoot__row">
+      <span class="sitefoot__note">Walter Scott, Jr. College of Engineering · Colorado State University</span>
+      <a class="sitefoot__link" href="https://fye-calendar.pages.dev/review">Review queue · office sign-in</a>
+    </div>
+  </footer>
 </div>
 
 <div id="overlays"></div>

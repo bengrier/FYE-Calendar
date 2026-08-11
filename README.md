@@ -45,7 +45,7 @@ is gitignored and wrangler never uploads it — production variables come from t
 Cloudflare dashboard — so it cannot reach a deployment. Without it the admin API
 refuses everything, which is what it should do.
 
-## The four surfaces
+## The five surfaces
 
 | Surface | How you get there |
 | --- | --- |
@@ -53,7 +53,7 @@ refuses everything, which is what it should do.
 | Event detail — flyer, tags, add-to-calendar, shareable link | click any event |
 | Submit an event — straight into the queue | **Submit an Event** in the header, or `#submit` |
 | Slideshow for lobby screens and lecture halls | **Slide Show**; arrows/space step, Esc exits |
-| Review queue (office only, behind a login) | **Shift+R**, or `#review` |
+| Review queue (office only, behind a login) | **Review queue** in the page footer |
 
 The showcase above the grid cycles through whatever is currently in view, in the
 order it happens; clicking a row in the running order jumps to it. It holds still
@@ -66,7 +66,6 @@ while a dialog is open and while the tab is in the background.
 | `/` | jump to the search box |
 | `←` `→` | step the week or month; step between events inside an open one |
 | `Esc` | close whatever is open, or clear the search |
-| `Shift+R` | the review queue |
 
 ### URLs
 
@@ -127,9 +126,14 @@ content type: a text file renamed `.png` and sent as `image/png` is refused.
 
 ## Reviewing
 
-**Shift+R**, or `#review`. The queue is behind Cloudflare Access — see
-"Deploying" — so only allow-listed addresses reach it, and it is fetched fresh
-every time the screen opens.
+The **Review queue** link in the page footer. It points at `/review`, which is a
+real path rather than the `#review` fragment on purpose: a fragment never
+reaches the server, so Cloudflare Access would have nothing to challenge and a
+reviewer would arrive at a queue with no way to sign in. `/review` takes the
+challenge, then hands them to the screen — see "Deploying".
+
+Only allow-listed addresses get through, and the queue is fetched fresh every
+time the screen opens.
 
 Approving publishes immediately, for everybody: one event per occurrence of the
 repeat rule, with any custom tags the reviewer kept becoming filterable from

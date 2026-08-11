@@ -122,6 +122,39 @@ textarea:focus-visible,
 .app { min-height: 100vh; background: var(--color-bg); }
 .page { padding: 30px 40px 60px; }
 
+/* The footer carries the office's sign-in link on a page whose readers are
+   almost entirely students, so it is quiet by design: findable when you know
+   to look, never competing with the calendar. Access decides who actually
+   gets in, so nothing is lost by the link being visible. */
+.sitefoot { padding: 0 40px 40px; }
+
+.sitefoot__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-top: 14px;
+}
+
+.sitefoot__note {
+  font-family: var(--font-brand);
+  font-size: 13px;
+  color: var(--ink-55);
+}
+
+.sitefoot__link {
+  font-family: var(--font-brand);
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-70);
+  text-decoration: none;
+  border-bottom: 1px solid var(--ink-35);
+  padding-bottom: 2px;
+}
+.sitefoot__link:hover { color: var(--color-accent-deep); border-color: var(--color-accent); }
+
 .kicker {
   font-size: 13px;
   letter-spacing: 0.2em;

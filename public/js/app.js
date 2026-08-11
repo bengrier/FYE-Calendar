@@ -2312,13 +2312,6 @@
     var tag = (e.target && e.target.tagName) || "";
     var typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 
-    /* Shift+R is the office's way into the review queue. */
-    if (e.shiftKey && (e.key === "R" || e.key === "r") && !typing) {
-      e.preventDefault();
-      if (state.reviewOpen) closeReview(); else openReview();
-      return;
-    }
-
     if (e.key === "Escape") {
       if (state.detailId) { closeDetail(); return; }
       if (state.submitOpen) { closeSubmit(); return; }
