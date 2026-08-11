@@ -83,9 +83,11 @@ so it publishes whatever is in the working tree no matter which branch is
 checked out. That is the trap — the branch name in the deploy command says
 nothing about what is being deployed.
 
-The one thing that is not as it should be: **deploys are direct uploads.**
-`npx wrangler pages deploy` publishes; pushing to GitHub does not. See
-[Still open](#still-open).
+**Deploying is a push to `main`** as of 2026-08-11, via GitHub Actions, and the
+database is backed up on a schedule by the same route. Both are inert until
+their repository secrets are set — see
+[the automation pass](#2026-08-11--deploys-and-backups-stopped-depending-on-one-person).
+`npx wrangler pages deploy` still works by hand and is what the workflow runs.
 
 Working tree clean as of writing.
 
@@ -207,6 +209,16 @@ PDF stay in step.
    They are publicly fetchable on the live site. The ISPE flyer also names a
    speaker. **Deliberately left, 2026-08-08.** Worth revisiting before launch if
    these flyers stay, since it is real people's contact channels on a public site.
+
+   **Updated 2026-08-11: this does not resolve itself, which is what was
+   assumed.** The standing plan was that the placeholders get deleted before
+   launch and take this with them. They will not. The flyers are committed
+   static files in `public/flyers/`, so `DELETE FROM events WHERE temporary = 1`
+   removes every row that displays them and leaves all eight files served at
+   `/flyers/…`, indefinitely, with nothing on the calendar pointing at them and
+   nothing in the retention sweep looking for them. Unreferenced is not
+   unreachable. Clearing the placeholders is therefore two steps, and README now
+   carries both — the second is a `git rm`.
 4. ~~**The seeded events are placeholder content.**~~ Still true, and now said
    out loud — see [the placeholder flag](#the-seeded-events-say-they-are-seeded).
 5. ~~**Nothing is emailed.**~~ Nothing in the interface claims to send mail. The
@@ -217,20 +229,39 @@ PDF stay in step.
 
 ### Still open
 
-**Deploys are direct uploads, not pushes.** The Pages project has no Git
-integration, because the dashboard's Connect-to-Git flow builds a Worker rather
-than a Pages project and a Worker cannot run `functions/`. So publishing means
-somebody with wrangler and the account runs `npx wrangler pages deploy`, which
-is exactly the single-person dependency this whole rebuild existed to remove —
-for publishing *events* it is solved, for publishing *the site* it is not. Worth
-revisiting whether Pages Git integration can be attached to an existing project,
-or whether the app should be converted to a Worker with static assets, which is
-where Cloudflare is steering everything anyway.
+~~**Deploys are direct uploads, not pushes.**~~ **Closed 2026-08-11** by
+`.github/workflows/deploy.yml`, which runs the same CLI upload on a push to
+`main`. Cloudflare's own Git integration is still unavailable for the reason it
+always was — Connect-to-Git builds a Worker, and a Worker cannot run
+`functions/` — but that turned out not to be the only way to get push-to-deploy,
+and converting the app to a Worker was never worth doing to obtain it. The
+workflow needs two repository secrets before it can work; see
+[the automation pass](#2026-08-11--deploys-and-backups-stopped-depending-on-one-person).
 
-**There are 23 placeholder events and one test event on the live calendar.**
-The placeholders announce themselves; the test event does not. README's "The
-seeded events are placeholders" has the command for the first, and the second is
-three rows from a weekly repeat.
+**There are 23 placeholder events and *four* unflagged events on the live
+calendar** — not one, which is what this file said until 2026-08-11. Counted
+from a real export on that date:
+
+| | |
+| --- | --- |
+| 23 | seeded placeholders, `temporary = 1`, announce themselves |
+| 3 | `Ben's Test Event` — the weekly-repeat deployment test, Aug 12/19/26 |
+| 1 | `Robotics Club: Line-Follower Sprint` — the seeded submission `p1`, approved |
+
+The last one is the one to know about. **Approving a seeded submission produces
+placeholder content that does not announce itself**, because approved events
+never carry the `temporary` flag — the flag lives on seeded *events*, and an
+approval writes a fresh row. `p2` (`Women in Computing Coffee Hour`) is still
+sitting in the live queue and will do exactly the same thing to whoever
+approves it. So the count of unflagged placeholder events grows every time
+somebody exercises the queue with the seed data, and README's `DELETE FROM
+events WHERE temporary = 1` will never catch any of them.
+
+**Deleting the placeholders leaves their flyers on the live site.** README's
+delete command clears database rows; the seeded artwork is committed static
+files in `public/flyers/`, which nothing in the database references by key and
+the retention sweep never walks. This is why open item 3 below is not
+self-resolving, which is what it was assumed to be.
 
 **`CONFIG.office.email` is empty.** One line, and it only affects the To: field
 on a reviewer's *Request changes* reply. Nothing depends on it any more.
@@ -269,10 +300,15 @@ Four things that make that survivable, in order of how much they buy:
 1. **Add a second admin to the Cloudflare account** — someone in the office,
    under Manage Account → Members. Costs nothing, takes a minute, and is the
    single thing most worth doing.
-2. **Back up the database.** `npx wrangler d1 export fye-calendar --remote
-   --output=backup.sql` produces a file that could rebuild everything. Run it
-   occasionally; keep it somewhere the office can reach. There is nothing
-   automatic doing this.
+2. ~~**Back up the database.**~~ **Done 2026-08-11**, and automatic:
+   `.github/workflows/backup.yml` exports it every Sunday and keeps an
+   encrypted copy for a year, outside Cloudflare on purpose. One backup was
+   also taken by hand that day. Two things still need a human — the
+   `BACKUP_PASSPHRASE` has to exist somewhere other than GitHub, and somebody
+   should restore one at some point, because a backup nobody has opened is a
+   guess. Note that the command this file used to recommend wrote `backup.sql`
+   into the repo root, which is a public repository and a file full of student
+   email addresses; `.gitignore` now catches that name.
 3. **Decide whether the address should be personal.** A CSU-owned hostname
    pointed at the same Pages project would cost nothing technically — it is one
    CNAME — and would take the domain out of the chain entirely.
@@ -730,7 +766,8 @@ The short version of where the code is:
 | Data | D1, seeded from `seed.sql`. No localStorage, no content in the JS |
 | API | `functions/api/` — `admin/` is behind Cloudflare Access |
 | The seam | `public/js/store.js`: synchronous reads from a cache, async mutations |
-| Deployed | Live since 2026-08-10. `npx wrangler pages deploy` publishes; a push does not |
+| Deployed | Live since 2026-08-10. A push to `main` publishes, via `.github/workflows/deploy.yml` |
+| Backups | `.github/workflows/backup.yml`, weekly, encrypted. D1 is the only copy of the queue |
 
 ## The deployment pass, 2026-08-10
 
@@ -756,7 +793,10 @@ that way compiles `functions/` exactly as designed.
 
 The cost of that route is that the project has no Git integration, so deploys
 are direct uploads. See [Still open](#still-open) — this is the one part of the
-arrangement that is worse than what it replaced.
+arrangement that is worse than what it replaced. (Closed 2026-08-11: still no
+Cloudflare Git integration and still for this reason, but the upload is driven
+by GitHub Actions on a push now, so nobody runs it by hand. Left as written,
+because the constraint it describes is still true and still the reason.)
 
 ### Cloudflare Access needs a zone, and there is no zone
 
@@ -1096,3 +1136,104 @@ should exist at all now, or whether work should simply happen on `main`. The
 name is load-bearing in exactly one place — the deploy label, which Cloudflare
 matches — and that would keep working even if the git branch were deleted
 tomorrow.
+
+*(Half-decided 2026-08-11: the deploy workflow triggers on `main` only, so
+`main` is now the branch that publishes. The git branch `cloudflare-backend`
+still exists and still has to be pushed by hand to stay level. See below.)*
+
+### 2026-08-11 — deploys and backups stopped depending on one person
+
+Two of the three accounts this calendar rests on are personal, and the honest
+summary of the arrangement was that a working calendar had a single person as
+its only dependency. Two of the ways that could go wrong are now closed, and
+neither needed the app to change.
+
+**Deploying is a push.** `.github/workflows/deploy.yml` runs the same
+`wrangler pages deploy` on a push to `main`. The reason this looked blocked for
+a day and a half is that the question had been framed as "can Cloudflare's Git
+integration be attached to this project" — and it cannot, for the reason it
+never could ([Connect-to-Git builds a
+Worker](#the-dashboard-builds-a-worker-and-workers-do-not-run-functions)). The
+other option on the table was converting the app to a Worker with static
+assets, which is a rewrite of the routing to buy back a feature. Neither was
+necessary: the CLI upload was always scriptable, and GitHub Actions is a place
+to run it that is not somebody's laptop.
+
+The `--branch cloudflare-backend` label is carried through into the workflow
+verbatim, with a comment saying what it is, because it is the single most
+misreadable string in this project — it is matched against the project's
+production branch and has nothing to do with git. Changing it does not fail;
+it quietly makes every deploy a preview nobody visits.
+
+**Backups are a schedule.** `.github/workflows/backup.yml`, Sundays at 10:00
+UTC, plus a manual trigger. It runs in GitHub rather than Cloudflare for the
+reason the retention sweep runs on writes: Pages Functions have no scheduled
+handler. But here that constraint is a benefit rather than something worked
+around — a backup living in the account it insures against losing is not a
+backup, and this one is somewhere else by construction.
+
+Three decisions worth knowing before changing it:
+
+- **The dump is encrypted before it is uploaded, and that is not decoration.**
+  This repository is public, a D1 export contains every submitter's real
+  `@colostate.edu` address, and artifacts are readable by anyone who can read
+  the repository. Encrypting makes the artifact's visibility stop mattering. If
+  the repo is ever made private, leave the encryption in — repositories get
+  flipped back.
+- **`openssl` rather than `gpg`, so the restore works on a stock Mac.** This was
+  checked rather than assumed, and the check is the reason for the choice: a
+  real dump encrypted with OpenSSL 3.6 was decrypted byte-identically by the
+  LibreSSL 3.3 at `/usr/bin/openssl` that macOS ships, and a wrong passphrase
+  fails loudly instead of producing plausible rubbish. `gpg` is not installed on
+  the machine this project is developed on, which is precisely the machine a
+  restore would happen on.
+- **The workflow decrypts its own output before uploading it.** The only moment
+  the passphrase and the ciphertext are ever in the same place is inside that
+  job, so it is the only moment the backup can be proved to open. It fails
+  rather than uploads if the round trip does not produce readable SQL, and it
+  fails before the export if `BACKUP_PASSPHRASE` is missing — naming the secret,
+  rather than failing later with a message about openssl.
+
+Both workflows are inert until two repository secrets exist —
+`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, and `BACKUP_PASSPHRASE` for
+the backup. **They fail loudly rather than silently while those are missing**,
+which is the right way round: a deploy that appears to succeed and publishes
+nothing is how you come to believe the live site has a change it does not have.
+
+#### What the export turned up about the live data
+
+The backup was taken first, partly to have one and partly because a real export
+answers questions this file had been answering from memory. Two of those answers
+were wrong, and both are corrected in [Still open](#still-open): there are
+**four** unflagged events on the live calendar rather than one, and deleting the
+placeholder rows will **not** take the flyers with them.
+
+The four-not-one is the more interesting error, because it is not a miscount so
+much as a category the design creates and nobody had named. Three of the four
+are the `Ben's Test Event` rows everybody knew about. The fourth is
+`Robotics Club: Line-Follower Sprint`, which exists because the seeded
+submission `p1` was approved during testing — and **an approved event never
+carries the `temporary` flag**, since the flag is written on seeded event rows
+and an approval writes a fresh one. So exercising the review queue against the
+seed data manufactures placeholder content that presents itself as real, one
+event at a time, and `p2` is still in the queue waiting to do it again.
+
+Worth a decision at some point: either the approve path should carry the flag
+across from a `temporary` submission, or the two seeded submissions should come
+out of the live queue. Not urgent, and not fixed here, because it changes
+behaviour and this pass was meant to touch nothing the students see.
+
+#### The stale `main` that had already caught somebody out
+
+The note above says the two branches drift and staying in step is manual. It had
+already happened: the local `main` in this working copy was 13 commits behind
+`origin/main`, still sitting on `888a622` — the retired, email-based calendar —
+because the fast-forward on 2026-08-11 was pushed but the local ref was never
+moved. `git checkout main` here would have silently produced the old site.
+
+Fixed with `git branch -f main origin/main`. It is worth noticing how quiet that
+was: nothing was broken, no command failed, and the only symptom would have been
+a deploy that put the wrong calendar on the live site. Now that the workflow
+publishes from `main`, that failure mode has teeth it did not have this morning
+— which is an argument for retiring `cloudflare-backend` rather than
+maintaining two branches by hand.

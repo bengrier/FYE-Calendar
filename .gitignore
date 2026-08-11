@@ -10,3 +10,14 @@
 # wrangler's local D1/R2 state and build cache
 .wrangler/
 node_modules/
+
+# Database dumps. THIS REPOSITORY IS PUBLIC and a D1 export contains every
+# submitter's name and real @colostate.edu address, so a dump must never be
+# committed. `wrangler d1 export --output=backup.sql` run from this directory
+# would drop one right here, which is why these patterns exist rather than
+# being left to care — but the actual advice is to write backups somewhere
+# outside the repo entirely. schema.sql and seed.sql are deliberately not
+# matched: they hold no real data and are meant to be tracked.
+backup*.sql
+fye-calendar-*.sql
+*.sql.enc

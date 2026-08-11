@@ -216,15 +216,26 @@ treats every filter chip as an invented tag and drops it on approval.
 `schema.sql` **drops every table**. Never run it against a database with real
 submissions in it; for a later change, run the one statement you need.
 
-**4. Deploy:**
+**4. Deploy.** Since 2026-08-11 this happens on a push to `main`, via
+[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml). Nobody needs
+wrangler, the account, or a checkout.
+
+It can still be run by hand, and this is what the workflow runs:
 
 ```bash
 npx wrangler pages deploy --branch cloudflare-backend
 ```
 
-Deploys are direct uploads. The project has no Git integration, so pushing to
-GitHub does not publish anything — someone runs this. That is the one piece of
-this arrangement worth revisiting.
+`--branch cloudflare-backend` is **not** a git operation and does not deploy
+that branch. It is a label Cloudflare matches against the project's production
+branch to decide production-or-preview; the bytes uploaded are whatever is in
+the working tree. That is the trap — the branch name in the command says
+nothing about what is being deployed.
+
+The project has no Cloudflare Git integration and is not getting one: the
+dashboard's Connect-to-Git flow builds a *Worker*, and a Worker cannot run
+`functions/` at all. The workflow gets push-to-deploy without that, by driving
+the same CLI upload.
 
 **5. Add One-time PIN as a login method**, in **Zero Trust → Settings →
 Authentication → Login methods**. A new organisation has only `cloudflare`,
@@ -291,6 +302,46 @@ If `fyetools.com` is ever moved onto Cloudflare, all of this collapses back into
 the simple version: one hostname, Access over it, a WAF rule instead of the
 table, and `REVIEW_HOST` unset.
 
+## Backups
+
+D1 is the only place submissions and approvals exist. The repo is cloned on
+several disks and could be re-hosted in an afternoon; the queue could not.
+
+[`.github/workflows/backup.yml`](.github/workflows/backup.yml) exports the
+database every Sunday and uploads it as an encrypted artifact, kept a year. It
+can also be run on demand from the Actions tab. The schedule lives in GitHub
+rather than Cloudflare for two reasons: Pages Functions have no scheduled
+handler, and a backup stored in the account it insures against losing is not a
+backup.
+
+To take one by hand:
+
+```bash
+npx wrangler d1 export fye-calendar --remote --output="$HOME/fye-calendar-backup.sql"
+```
+
+`$HOME` rather than `~` because a tilde after `=` is not expanded — that
+command with `~` creates a directory actually named `~` inside the repo, which
+is both the wrong place and a nuisance to delete.
+
+**Write it outside this repository.** The repo is public and the dump contains
+every submitter's name and real `@colostate.edu` address. `.gitignore` catches
+the obvious filenames, but the habit is what matters — the export command as
+written in older notes drops `backup.sql` straight into the repo root.
+
+That is also why the workflow encrypts before uploading: artifacts on a public
+repository are readable by anyone who can read the repository. Restoring is one
+`openssl` command, documented at the top of the workflow.
+
+Two things the workflow cannot do, both of which are open items in
+[Handoff.md](Handoff.md):
+
+- **A second admin on the Cloudflare account** is worth more than any backup.
+  It costs nothing and takes a minute: Manage Account → Members.
+- **The passphrase must exist somewhere other than GitHub.** Put
+  `BACKUP_PASSPHRASE` in the office's password manager. GitHub will not show it
+  to you again, and a backup nobody can decrypt is not a backup.
+
 ## The seeded events are placeholders
 
 Every event `seed.sql` inserts is invented — written to build and demonstrate
@@ -306,6 +357,24 @@ npx wrangler d1 execute fye-calendar --remote --command="DELETE FROM event_tags 
 ```
 
 The notice removes itself.
+
+**That command does not remove the artwork, and the artwork is the part with
+other people's data on it.** The seeded flyers are committed static files in
+`public/flyers/`, not R2 uploads — nothing in the database points at them by
+key, the retention sweep never considers them (it only walks the `f-` prefix in
+the bucket), and they stay fetchable at `/flyers/ispe.png` and the rest long
+after every row that displayed them is gone. Two of them carry live QR codes to
+a real GroupMe and a real Instagram, and one names a speaker.
+
+So clearing the placeholders is two steps, and the second is easy to forget:
+
+```bash
+git rm public/flyers/aiaa.png public/flyers/cookie.png public/flyers/ispe.pdf public/flyers/ispe.png public/flyers/major.pdf public/flyers/major.png public/flyers/peru.pdf public/flyers/peru.png
+```
+
+Do the second only when the placeholders are actually going, and check that no
+approved event has inherited a seeded key first — `flyer_key` on a real event is
+normally an `f-…` R2 key, but a seeded event's is a bare name like `peru`.
 
 ## Old events remove themselves
 

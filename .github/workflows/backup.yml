@@ -1,0 +1,159 @@
+# Back the database up on a schedule, because nothing else does.
+#
+# D1 is the only place the submissions and approvals exist. The repo is cloned
+# on several disks and could be re-hosted in an afternoon; the queue could not.
+# Handoff.md has said "run it occasionally" since 2026-08-10, which in practice
+# means a backup nobody takes.
+#
+# Pages Functions have no scheduled handler — that is a Worker feature, and this
+# is a Pages project precisely because a Worker cannot run functions/ — so the
+# schedule has to live outside Cloudflare. GitHub Actions is outside Cloudflare,
+# which is also the point: a backup stored in the same account it insures
+# against losing is not a backup.
+#
+# ── The dump is encrypted, and that is not decoration ────────────────────────
+#
+# This repository is PUBLIC, and a D1 export contains every submitter's name and
+# real @colostate.edu address. Two consequences, both load-bearing:
+#
+#   1. The dump is never committed. It is written to the runner and uploaded as
+#      an artifact; nothing here writes into the working tree.
+#   2. Artifacts are readable by anyone who can read the repository, and on a
+#      public repository that is everyone. So the dump is encrypted with a
+#      passphrase before it is uploaded, and the artifact is ciphertext.
+#
+# If this repository is ever made private, the encryption is still correct and
+# costs nothing. Do not remove it on the grounds that the repo is private now —
+# repositories get flipped back.
+#
+# Three secrets, in Settings → Secrets and variables → Actions:
+#
+#   CLOUDFLARE_API_TOKEN   — the same token the deploy workflow uses. The
+#                            "Edit Cloudflare Workers" template includes D1
+#                            write, which `d1 export` needs (it writes a
+#                            temporary object to R2 and hands back a link).
+#   CLOUDFLARE_ACCOUNT_ID  — Workers & Pages → Overview, right-hand column.
+#   BACKUP_PASSPHRASE      — invent a long random one and put it in the office's
+#                            password manager, NOT only in GitHub. A backup you
+#                            cannot decrypt is not a backup, and GitHub will not
+#                            show you this value again after you save it.
+#
+# ── Restoring ────────────────────────────────────────────────────────────────
+#
+# Download the artifact, unzip it, then:
+#
+#   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+#     -pass pass:'THE PASSPHRASE' \
+#     -in fye-calendar-YYYY-MM-DD.sql.enc -out fye-calendar.sql
+#
+# openssl rather than gpg specifically so that line works on a stock Mac with
+# nothing installed. It was checked, not assumed: a real dump encrypted by
+# OpenSSL 3.6 was decrypted byte-identically by the LibreSSL 3.3 at
+# /usr/bin/openssl that macOS ships, and a wrong passphrase fails loudly rather
+# than producing plausible rubbish.
+#
+# That file is plain SQL: CREATE TABLE statements and INSERTs. To rebuild into a
+# fresh database, `wrangler d1 create` a new one and execute the file against
+# it. Do NOT execute it against a live database with real rows in it — like
+# schema.sql, it recreates tables.
+#
+# Worth reading it before trusting it. `sqlite3 fye-calendar.sql` locally and a
+# count of the events and submissions tables takes a minute and is the only
+# thing that actually proves a backup is a backup.
+
+name: Backup database
+
+on:
+  schedule:
+    # Sundays at 10:00 UTC — about 4am in Colorado either side of DST. The
+    # export takes the database offline for the moment it runs, so this wants to
+    # be an hour when nobody is submitting.
+    - cron: "0 10 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: backup-d1
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Refuse to run without a passphrase
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        # Without this the encrypt step below would fail anyway, but it would
+        # fail after the export, with a message about openssl rather than about
+        # the missing secret. Fail first and name the secret.
+        run: |
+          if [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "::error::BACKUP_PASSPHRASE is not set. The dump holds real student email addresses and is not uploaded unencrypted."
+            exit 1
+          fi
+
+      - name: Export the database
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@4 d1 export fye-calendar --remote \
+            --output="fye-calendar-$(date -u +%Y-%m-%d).sql"
+
+      # A dump with no INSERTs is what a broken export looks like: the command
+      # succeeds, the file exists, and it restores an empty calendar. Checking
+      # afterwards is cheap; discovering it during a restore is not.
+      - name: Check the dump is not empty
+        run: |
+          FILE="fye-calendar-$(date -u +%Y-%m-%d).sql"
+          ROWS=$(grep -c "^INSERT INTO" "$FILE" || true)
+          echo "$FILE — $(wc -c < "$FILE") bytes, $ROWS INSERT statements"
+          if [ "$ROWS" -lt 1 ]; then
+            echo "::error::Export contains no rows. Not uploading a backup that would restore an empty calendar."
+            exit 1
+          fi
+
+      - name: Encrypt
+        env:
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          FILE="fye-calendar-$(date -u +%Y-%m-%d).sql"
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+            -pass env:BACKUP_PASSPHRASE \
+            -in "$FILE" -out "$FILE.enc"
+          # -pass env: rather than -pass pass:, so the passphrase is never a
+          # word in a command line any other process on the runner could read.
+          #
+          # The plaintext never leaves this step. Every later step, and the
+          # artifact, sees only the ciphertext.
+          rm -f "$FILE"
+
+          # Prove the file that is about to be uploaded actually opens. An
+          # unverified backup is a guess, and this is the only moment the
+          # passphrase and the ciphertext are ever in the same place.
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+            -pass env:BACKUP_PASSPHRASE \
+            -in "$FILE.enc" -out /tmp/verify.sql
+          if ! grep -q "^INSERT INTO" /tmp/verify.sql; then
+            echo "::error::The encrypted backup did not decrypt back to readable SQL. Not uploading it."
+            exit 1
+          fi
+          echo "Verified: decrypts to $(grep -c '^INSERT INTO' /tmp/verify.sql) INSERT statements."
+          rm -f /tmp/verify.sql
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fye-calendar-backup
+          path: "*.sql.enc"
+          # A year of weekly backups. The default is 90 days, which is shorter
+          # than the gap between someone breaking something and someone
+          # noticing over a summer.
+          retention-days: 365
+          if-no-files-found: error
