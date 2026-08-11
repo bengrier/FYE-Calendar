@@ -53,7 +53,7 @@ them again.</summary>
 | Repo | <https://github.com/bengrier/FYE-Calendar> (public) |
 | Live | <https://calendar.fyetools.com> — Cloudflare Pages + Functions + D1 + R2, branch `cloudflare-backend` |
 | Reviewers | <https://fye-calendar.pages.dev/review> — a second address on purpose; [why](#the-deployment-pass-2026-08-10) |
-| Taken down | <https://bengrier.github.io/FYE-Calendar/> — GitHub Pages, the old static, email-based version. Disabled 2026-08-11; the address 404s. Its files are still in `main`. |
+| Taken down | <https://bengrier.github.io/FYE-Calendar/> — GitHub Pages, the old static, email-based version. Disabled 2026-08-11; the address 404s. Its last state is the tag `static-calendar-final`. |
 | Accounts | GitHub and Cloudflare are both Ben Grier's personal accounts, and the domain is his at Hover — see [the open item](#the-hosting-is-personal-and-that-is-now-a-decision) |
 | Origin | Implemented from the Claude Design prototype `Community Calendar.dc.html` (project `969b693a-9fb3-4ad4-ae08-0e5ed698d1f3`), on the Broadsheet design system |
 
@@ -63,19 +63,25 @@ filesystem; the server pass ended that, but the simplicity was worth keeping.
 
 ## State
 
-`cloudflare-backend` is the live calendar: submissions go straight into a
-database, approvers sign in, approving publishes immediately. Deployed
-2026-08-10 and exercised end to end against the real stack.
+This is the live calendar: submissions go straight into a database, approvers
+sign in, approving publishes immediately. Deployed 2026-08-10 and exercised end
+to end against the real stack.
 
-`main` still holds the old static, email-based calendar, but nothing serves it
-any more: GitHub Pages was disabled on 2026-08-11 and
-<https://bengrier.github.io/FYE-Calendar/> now 404s. There is one live calendar.
-The old files are untouched in `main` and Pages can be switched back on from the
-repository's settings, so this is a take-down rather than a deletion.
+There is one calendar now, and one version of it in the repo. The old static,
+email-based site stopped being served on 2026-08-11, when GitHub Pages was
+disabled and <https://bengrier.github.io/FYE-Calendar/> began returning 404;
+`main` was fast-forwarded to this branch the same day, so the default branch is
+the calendar that actually exists. Nothing was rewritten or deleted — the
+fast-forward was clean because `main` was a direct ancestor, and the old site's
+last state is tagged `static-calendar-final` if it is ever wanted back.
 
-What is still worth doing is replacing `main` with this branch, so the repo
-holds one calendar rather than two — the default branch is the first thing
-somebody reads, and right now it is the version that no longer exists.
+**`main` and `cloudflare-backend` are the same commit, and staying in step is
+manual.** Commit to one and the other is behind until it is pushed there too.
+Deploys are unaffected either way: `--branch cloudflare-backend` is a label
+Cloudflare matches against the project's production branch, not a git operation,
+so it publishes whatever is in the working tree no matter which branch is
+checked out. That is the trap — the branch name in the deploy command says
+nothing about what is being deployed.
 
 The one thing that is not as it should be: **deploys are direct uploads.**
 `npx wrangler pages deploy` publishes; pushing to GitHub does not. See
@@ -1055,12 +1061,38 @@ mails a person who has stopped watching that inbox, and never know it went
 nowhere.
 
 `DELETE /repos/bengrier/FYE-Calendar/pages`, done through `gh api`. Nothing was
-deleted: `main` still holds every file the old site served, and Pages can be
-turned back on from the repository's settings pointed at the same branch and
-path. The URL simply stops resolving.
+deleted — the URL simply stops resolving, and Pages can be turned back on from
+the repository's settings. What it would serve has changed since, though: `main`
+was replaced later the same day (below), so pointing Pages at `main` now would
+publish *this* calendar as a second copy, which is the thing the take-down
+existed to prevent. The old site is the tag `static-calendar-final`.
 
 A redirect to <https://calendar.fyetools.com> was the alternative, and was
 declined deliberately — the address 404s rather than forwarding, so an old
 bookmark or a link in a two-year-old email announces itself as dead instead of
-quietly working forever. If that turns out to be the wrong call, re-enabling
-Pages with a one-line redirect page at `main`'s root is the way back.
+quietly working forever.
+
+### 2026-08-11 — `main` is the calendar that exists
+
+`main` was fast-forwarded to `cloudflare-backend`, so the default branch — the
+first thing anybody who opens the repo reads — is no longer the retired,
+email-based version. `main` was a direct ancestor of this branch, so this was an
+ordinary fast-forward: no force push, no rewritten history, nothing orphaned.
+The old tip is tagged `static-calendar-final`, both because the take-down note
+above promised the old site was recoverable and because a tag is findable in a
+way that a commit hash in a paragraph is not.
+
+The two branches now point at the same commit and **nothing keeps them there.**
+Committing to one leaves the other behind. Deploying does not care: the
+`--branch cloudflare-backend` in `npx wrangler pages deploy` is a label
+Cloudflare matches against the project's production branch, not a git ref, and
+the upload is whatever is in the working tree at the time. So a deploy can
+publish work that neither branch has, and a branch can hold work that was never
+deployed. The one habit that keeps this straight is to commit, push both, then
+deploy — in that order.
+
+Worth deciding at some point, but not urgent: whether `cloudflare-backend`
+should exist at all now, or whether work should simply happen on `main`. The
+name is load-bearing in exactly one place — the deploy label, which Cloudflare
+matches — and that would keep working even if the git branch were deleted
+tomorrow.
