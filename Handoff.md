@@ -53,7 +53,7 @@ them again.</summary>
 | Repo | <https://github.com/bengrier/FYE-Calendar> (public) |
 | Live | <https://calendar.fyetools.com> — Cloudflare Pages + Functions + D1 + R2, branch `cloudflare-backend` |
 | Reviewers | <https://fye-calendar.pages.dev/review> — a second address on purpose; [why](#the-deployment-pass-2026-08-10) |
-| Also still up | <https://bengrier.github.io/FYE-Calendar/> — GitHub Pages, `main` / root. The old static, email-based version. |
+| Taken down | <https://bengrier.github.io/FYE-Calendar/> — GitHub Pages, the old static, email-based version. Disabled 2026-08-11; the address 404s. Its files are still in `main`. |
 | Accounts | GitHub and Cloudflare are both Ben Grier's personal accounts, and the domain is his at Hover — see [the open item](#the-hosting-is-personal-and-that-is-now-a-decision) |
 | Origin | Implemented from the Claude Design prototype `Community Calendar.dc.html` (project `969b693a-9fb3-4ad4-ae08-0e5ed698d1f3`), on the Broadsheet design system |
 
@@ -67,11 +67,15 @@ filesystem; the server pass ended that, but the simplicity was worth keeping.
 database, approvers sign in, approving publishes immediately. Deployed
 2026-08-10 and exercised end to end against the real stack.
 
-`main` still holds the old static, email-based calendar and GitHub Pages still
-serves it. Nothing points at it any more. It costs nothing to leave up while the
-new one is being watched, and it should be taken down — or `main` replaced with
-this branch — once the office has signed off, because two live calendars is a
-thing somebody will eventually find the wrong one of.
+`main` still holds the old static, email-based calendar, but nothing serves it
+any more: GitHub Pages was disabled on 2026-08-11 and
+<https://bengrier.github.io/FYE-Calendar/> now 404s. There is one live calendar.
+The old files are untouched in `main` and Pages can be switched back on from the
+repository's settings, so this is a take-down rather than a deletion.
+
+What is still worth doing is replacing `main` with this branch, so the repo
+holds one calendar rather than two — the default branch is the first thing
+somebody reads, and right now it is the version that no longer exists.
 
 The one thing that is not as it should be: **deploys are direct uploads.**
 `npx wrangler pages deploy` publishes; pushing to GitHub does not. See
@@ -280,7 +284,10 @@ any of it — all four are written up in
 [the deployment pass](#the-deployment-pass-2026-08-10).
 
 The GitHub Pages and Cloudflare Pages deployments still run side by side. They
-share a repo but not a branch, and nothing points at the old one.
+share a repo but not a branch, and nothing points at the old one. (No longer
+true as of 2026-08-11 — see
+[the old calendar is off the air](#2026-08-11--the-old-calendar-is-off-the-air).
+Left as written, because it is the record of the day it describes.)
 
 ## Notes for whoever extends this
 
@@ -1037,3 +1044,23 @@ not loop, because the Exit button clears `state.slideshow` before it calls
 Worth one press on a real full-screen display: the in-app preview browser
 refuses `requestFullscreen`, so the path was exercised by dispatching the event
 rather than by actually being fullscreen.
+
+### 2026-08-11 — the old calendar is off the air
+
+GitHub Pages is disabled for this repository, so
+<https://bengrier.github.io/FYE-Calendar/> returns 404 and the static,
+email-based calendar is no longer reachable. Two live calendars was the standing
+risk — somebody would eventually find the wrong one, submit to an address that
+mails a person who has stopped watching that inbox, and never know it went
+nowhere.
+
+`DELETE /repos/bengrier/FYE-Calendar/pages`, done through `gh api`. Nothing was
+deleted: `main` still holds every file the old site served, and Pages can be
+turned back on from the repository's settings pointed at the same branch and
+path. The URL simply stops resolving.
+
+A redirect to <https://calendar.fyetools.com> was the alternative, and was
+declined deliberately — the address 404s rather than forwarding, so an old
+bookmark or a link in a two-year-old email announces itself as dead instead of
+quietly working forever. If that turns out to be the wrong call, re-enabling
+Pages with a one-line redirect page at `main`'s root is the way back.
