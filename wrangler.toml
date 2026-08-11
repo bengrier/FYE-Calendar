@@ -57,6 +57,20 @@ ACCESS_AUD = "bb37e73ef092adb255287e8a4a7a92f5f30270ff806e59dab9c84e3af86d4d4a"
 # domain when they are done — both name this host and have to move with it.
 REVIEW_HOST = "fye-calendar.pages.dev"
 
+# How long an event stays on the calendar after it has happened. Past that, the
+# event is deleted and any flyer uploaded for it is deleted from R2 — otherwise
+# artwork accumulates in the bucket forever and is paid for forever.
+#
+# The sweep runs on submit and on approve, at most once every twelve hours,
+# because Pages Functions have no scheduled handler to hang it on. Unset means
+# three months.
+#
+# "0" keeps every event forever. It does not stop the rest of the sweep, which
+# also collects a declined submission's flyer and any upload no submission ever
+# claimed: neither was ever on the calendar, so keeping the calendar's history
+# says nothing about them. functions/_lib/retention.js.
+EVENT_RETENTION_MONTHS = "3"
+
 # Local development cannot present an Access JWT, so admin routes are
 # unreachable with the settings above. Put
 #

@@ -14,6 +14,7 @@
 
 import { json, fail, methodNotAllowed, readJson, uid } from "../_lib/http.js";
 import { validateSubmission } from "../_lib/submission.js";
+import { sweepInBackground } from "../_lib/retention.js";
 
 var WINDOW_MS = 60 * 60 * 1000;
 var LIMIT = 5;
@@ -124,6 +125,12 @@ export async function onRequest(context) {
   }
 
   await db.batch(statements);
+
+  /* Somebody adding an event is the moment the calendar grows, so it is the
+     moment to take out what has aged off the other end. It runs after this
+     response, at most once every twelve hours however many submissions arrive,
+     and it cannot fail the submission. See functions/_lib/retention.js. */
+  sweepInBackground(context);
 
   return json({ id: id }, { status: 201 });
 }

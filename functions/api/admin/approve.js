@@ -15,6 +15,7 @@
 
 import { json, fail, methodNotAllowed, readJson, uid } from "../../_lib/http.js";
 import { occurrences } from "../../_lib/submission.js";
+import { sweepInBackground } from "../../_lib/retention.js";
 
 export async function onRequest(context) {
   if (context.request.method !== "POST") return methodNotAllowed("POST");
@@ -98,6 +99,14 @@ export async function onRequest(context) {
     });
 
   if (statements.length) await db.batch(statements);
+
+  /* The other end of the same idea as the submit path: events arriving is when
+     events leaving is due. Deliberately after the batch above, never before —
+     a sweep that ran first would be looking at this submission in the moment
+     between its status change and its events existing. The settling period in
+     retention.js is what makes that safe rather than this ordering, but there
+     is no reason to lean on it. */
+  sweepInBackground(context);
 
   return json({ published: dates.length, dates: dates });
 }

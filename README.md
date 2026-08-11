@@ -307,6 +307,76 @@ npx wrangler d1 execute fye-calendar --remote --command="DELETE FROM event_tags 
 
 The notice removes itself.
 
+## Old events remove themselves
+
+R2 is the one part of this with a bill attached to how long it runs rather than
+to how much it does, so three things are collected.
+
+**Events more than three months past** are deleted, and if one was the last
+event using an uploaded flyer, that file is deleted from R2 with it. Change the
+window with `EVENT_RETENTION_MONTHS` in `wrangler.toml`, or set it to `"0"` to
+keep every event forever.
+
+**A declined submission's flyer**, a day after the decision. It produced no
+events and never will, so it is cost with no purpose. The submission row is
+still kept — "we have no record of it" is a bad answer to somebody asking what
+happened to theirs — but the row is a few hundred bytes and the artwork is
+megabytes, so only the pointer survives. The day is a reviewer's grace period:
+long enough to say they did not mean it while the file is still there.
+
+**Uploads no submission ever claimed**, once they are a day old. `POST
+/api/flyers` stores the file and hands back a key *before* the submission that
+names it exists, so anything that stops a submission after the upload — a
+server-side refusal, a 429 from the rate limiter, a dropped connection, a closed
+tab — leaves an object in the bucket that nothing has ever pointed at, and the
+retry uploads a second copy. This is the leak that needs no reviewer and no
+approval, only somebody with a file. It is found by walking the bucket and
+asking the database which keys are spoken for, because an object nothing
+references cannot be found from the database at all.
+
+`EVENT_RETENTION_MONTHS = "0"` turns off **only the first of those three**. It
+says the calendar keeps its history. A declined submission's artwork was never
+on the calendar and an unclaimed upload never even reached the queue, so neither
+is a policy anybody would want to opt out of by asking for a longer memory.
+
+The threshold protecting an upload is a day, and the window it is really
+guarding is seconds — the client uploads when Submit is pressed and posts the
+submission on the next round trip. Anything that ever moves the upload earlier
+in the form spends that margin.
+
+**There is no cron, because Pages Functions have no scheduled handler** —
+`scheduled` is a Worker feature and this is a Pages project on purpose (see
+step 2 of "Deploying"). So the sweep rides on writes: submitting an event and
+approving one each start one, after their own response has gone back. At most
+one real sweep runs every twelve hours however many submissions arrive, claimed
+through the `maintenance` table so two requests cannot both sweep. A calendar
+nobody is adding to is also a calendar nothing is accumulating in, which is why
+that is sufficient rather than merely convenient.
+
+Three things it deliberately does not touch:
+
+- **A flyer with any surviving event.** A weekly series straddling the cutoff
+  keeps its artwork until the last occurrence ages out.
+- **A pending submission's flyer.** It is in the queue and its reviewer has to
+  see it to decide.
+- **Anything decided or uploaded in the last day.** One grace period, used for
+  three different reasons — see `SETTLE_MS` and `ORPHAN_MIN_AGE_MS`.
+
+Nothing here deletes a submission row. Every decision the office ever made is
+still on record; it is only the artwork that goes.
+
+`functions/_lib/retention.js`, with the reasoning in the comments.
+
+**An existing database needs the table**, since `schema.sql` drops everything
+and cannot be re-run against real data:
+
+```bash
+npx wrangler d1 execute fye-calendar --remote --command="CREATE TABLE IF NOT EXISTS maintenance (name TEXT PRIMARY KEY, at INTEGER NOT NULL);"
+```
+
+Without it every sweep throws, is swallowed, and nothing is ever deleted —
+quietly, since the failure only reaches the Function's log.
+
 ## Configuration
 
 `CONFIG` in [`public/js/data.js`](public/js/data.js):
@@ -333,6 +403,10 @@ dashboard — see step 7 of "Deploying" for why that distinction matters:
   in. The footer link in `public/index.html` names the same host and has to move
   with it. Unset, `/review` stays where it was asked, which is right for a
   deployment where Access covers every hostname.
+- `EVENT_RETENTION_MONTHS` — how long an event stays after it has happened,
+  before it and its uploaded flyer are deleted. Unset means three months; `"0"`
+  keeps every event forever, and does not stop declined flyers and unclaimed
+  uploads being collected. See "Old events remove themselves".
 - `DEV_UNSAFE_NO_AUTH` — local only, via `.dev.vars`. Never set this anywhere
   else.
 

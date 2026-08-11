@@ -9,6 +9,7 @@
 -- the same reason: an event must never slide a day across a time zone.
 -- Timestamps are epoch milliseconds.
 
+DROP TABLE IF EXISTS maintenance;
 DROP TABLE IF EXISTS submission_attempts;
 DROP TABLE IF EXISTS submission_tags;
 DROP TABLE IF EXISTS event_tags;
@@ -99,3 +100,18 @@ CREATE TABLE submission_attempts (
 );
 
 CREATE INDEX submission_attempts_by_ip ON submission_attempts (ip, at);
+
+-- When each unattended job last ran. One row per job; `at` is the last time one
+-- started, in epoch milliseconds.
+--
+-- This exists to be claimed rather than read. The retention sweep rides on
+-- ordinary writes — Pages Functions have no scheduled handler, so there is
+-- nothing else to hang it on — and two submissions arriving together must not
+-- both sweep. Writing the timestamp conditionally, in one statement, lets the
+-- database settle that, the same way approve claims a submission.
+--
+-- See functions/_lib/retention.js.
+CREATE TABLE maintenance (
+  name TEXT PRIMARY KEY,
+  at   INTEGER NOT NULL
+);

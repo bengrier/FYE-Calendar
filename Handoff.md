@@ -839,6 +839,159 @@ and one approved test event which does not. Both are in
 Small changes made against the live site. Each one is deployed and confirmed
 working; the passes above are left as the record of the day they describe.
 
+### 2026-08-11 — the calendar collects its own rubbish
+
+Nothing ever left this calendar. Events accumulated, and under each one that had
+an uploaded flyer sat a file in R2 with no end date on it — the only part of
+this arrangement with a bill attached to how long it runs rather than to how
+much it does. Three things are collected now: **events more than three months
+past**, with any flyer whose last event goes with them; **a declined
+submission's flyer**, which produced no events and never will; and **uploads no
+submission ever claimed**, which turned out to be the largest of the three.
+`functions/_lib/retention.js`, written up in README under
+[Old events remove themselves](README.md#old-events-remove-themselves).
+
+**The trigger is a write, and that is forced rather than chosen.** Pages
+Functions have no scheduled handler — `scheduled` is a Worker feature, and this
+is a Pages project precisely because a Worker cannot run `functions/` at all
+([why](#the-dashboard-builds-a-worker-and-workers-do-not-run-functions)). Cron
+Triggers were the obvious answer and are not available at all here. So
+submitting an event and approving one each start a sweep, after their own
+response has gone back, claimed through a new `maintenance` table so that at
+most one runs every twelve hours however many requests arrive. That is not the
+compromise it first looks like: the calendar only grows when somebody adds to
+it, so the thing that makes cleanup necessary is the same thing that triggers it.
+
+Three decisions worth knowing before changing any of it:
+
+- **The set of flyers to delete is re-derived from the database every run**, as
+  approved submissions holding a flyer that no event points at any more, rather
+  than remembered from the run that orphaned them. A sweep that dies between
+  deleting the events and deleting the file is then corrected by the next sweep.
+  Remembering would have leaked that file permanently, since nothing left in the
+  database would ever name it again.
+- **The object goes before the pointer to it does.** The other order frees
+  nothing if the R2 delete fails and loses the only record of which file to
+  free. This way a failure between the two costs a dead string in a submission
+  row nobody reads after the decision.
+- **A submission is not a candidate until it has been decided for a day.**
+  Approve sets the status in one statement and writes the events in the next
+  batch, and in between it looks exactly like a submission whose events have all
+  aged out — so a sweep started by that very approval could have deleted the
+  artwork of the event being published. That is the whole reason for the
+  settling period, and it is why the sweep in `approve.js` is started after the
+  batch rather than before. The same day of grace does a second job for
+  declines: a reviewer who did not mean it has until tomorrow, with the file
+  still there to restore.
+
+**A declined submission's flyer goes too**, which was very nearly left as an
+open item and should not have been. It produced no events and never will, so it
+is cost with no purpose from the moment of the decision, and it is the one kind
+of orphan a reviewer creates simply by doing their job. The row stays — "we have
+no record of it" is still a bad answer to somebody asking what happened to their
+submission, which is why `decline.js` keeps it — but the row is a few hundred
+bytes against megabytes of artwork, so only the pointer survives. **Nothing in
+this file deletes a submission row.** Every decision the office ever made is
+still on record.
+
+What it does leave alone: a flyer with any surviving event (a weekly series
+straddling the cutoff keeps its artwork until the last occurrence goes), and a
+pending submission's flyer, because it is in the queue and its reviewer has to
+see it to decide.
+
+#### The second job: uploads nobody ever submitted
+
+Aged-out events were the smaller half. `POST /api/flyers` stores the bytes and
+issues a key *before* the submission that names it exists — it has to, because
+the submission names a key that must already be there — so every upload not
+followed by an accepted submission leaves an object nothing has ever pointed at.
+
+That is not an edge case. The client uploads and *then* posts, so a server-side
+validation refusal, a 429 from the rate limiter, a dropped connection or a
+closed tab each leave one behind, and the retry that follows uploads a second
+copy. It is also the leak that needs no reviewer and no approval — anyone with
+a file can make them, ten megabytes at a time — which is what made it worth
+doing in the same pass rather than writing down as an open item.
+
+It is the one part of the sweep that cannot work from the database, because an
+object nothing references is by definition not in it. So it walks the bucket and
+asks D1 which of the keys it found are spoken for, which inverts the order used
+everywhere else in that file: here the bucket proposes and the database
+disposes, and **nothing is deleted until D1 has answered**. A failed lookup
+deletes nothing rather than everything, which is the only acceptable failure
+mode for a loop holding a delete.
+
+Two things to know before changing it:
+
+- **The age threshold is a day and the window it guards is seconds.** The client
+  uploads when Submit is pressed and posts the submission on the next round
+  trip. A day is absurd on purpose: this deletes a file a person chose, and the
+  cost of waiting is one flyer for one more day. Anything that ever moves the
+  upload earlier in the form — a preview, a two-step submit — spends that
+  margin, and should raise it.
+- **`EVENT_RETENTION_MONTHS = "0"` does not switch this off**, and does not
+  switch off declined flyers either. It turns off exactly one of the three
+  things the sweep does: deleting events for age. That setting says the calendar
+  keeps its history, and neither a declined submission's artwork nor an upload
+  nobody ever submitted was ever part of that history. The flyer pass runs
+  either way and simply finds less, because its query is written against the
+  state of the database rather than against what the run happened to delete.
+  Orphan keys are matched on the `f-` prefix the API issues, so nothing outside
+  that namespace is ever a candidate.
+
+#### What was checked, against a local D1 and R2
+
+Not by reading. A two-occurrence event aged out and its flyer deleted; a weekly
+series straddling the cutoff keeping its artwork; an event dated exactly on the
+cutoff kept; a submission approved an hour ago untouched; the twelve-hour claim
+refusing a second sweep and then allowing one once the interval had elapsed;
+month-end clamping in `monthsBefore` (31 May − 3 months = 28 or 29 February).
+
+Then, with four objects in the bucket: everything uploaded moments ago survived
+a sweep; after backdating three of them, only the aged *and* unclaimed one was
+deleted — the one held by a pending submission, the one held by an event, and
+the one still under a day old all survived.
+
+Then declines: one declined two days earlier lost its flyer and kept its row,
+with `flyer_key` nulled and `status` still `declined`; one declined an hour
+earlier kept its artwork; one still pending kept its artwork.
+
+Finally, with `EVENT_RETENTION_MONTHS = "0"`: an event dated 2020 was kept,
+while an aged orphan and a two-day-old decline's flyer were both still
+collected — which is the case that broke when declines were added, because the
+flyer pass had been sitting inside the retention gate and had to come out of it.
+
+#### Deployed, and what the first live sweep did
+
+Deployed the same day. The `maintenance` table was created first, by hand,
+because `schema.sql` drops every table and can never be run against this
+database again:
+
+```bash
+npx wrangler d1 execute fye-calendar --remote --command="CREATE TABLE IF NOT EXISTS maintenance (name TEXT PRIMARY KEY, at INTEGER NOT NULL);"
+```
+
+**The state of the live data was checked before deploying, not after**, because
+deploying arms a deleter and there is no undo. Nothing was due: no event fell
+before the cutoff (the earliest on the calendar is 2026-08-03 against a cutoff
+of 2026-05-11), no submission held a flyer with nothing left to be on, and the
+bucket held exactly one object against exactly one referenced key, so there were
+no orphans either. The first sweep was therefore a guaranteed no-op, which is
+the right way to turn this on.
+
+Then it was watched running on production. A test submission triggered it; the
+tail of that request came back `outcome: ok` with an empty `exceptions` array
+and no log line — correct on all three counts, since the sweep only logs when it
+removed something. That is what proves `sweepOrphanUploads` works against the
+real R2, which is the one thing miniflare cannot demonstrate. Four test rows
+were made getting there and all four were deleted afterwards, along with the
+`submission_attempts` rows they created.
+
+If you need to watch it again, the tail needs the deployment id positionally —
+`wrangler pages deployment tail <id> --project-name fye-calendar` — and it
+prints pretty-printed JSON objects rather than one per line, which will defeat a
+naive JSONL parser.
+
 ### 2026-08-11 — the reviewer's way back
 
 The two-hostname split has a return trip, and it was missing. Access covers
