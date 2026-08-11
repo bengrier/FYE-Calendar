@@ -113,8 +113,10 @@
        domain, whose DNS is not on Cloudflare. A reviewer sent to /review here
        would reach the queue with no way to sign in.
 
-       If the Access application ever moves to a different hostname, this link
-       and REVIEW_HOST in wrangler.toml both have to follow it. -->
+       If the Access application ever moves to a different hostname, this link,
+       REVIEW_HOST in wrangler.toml and REVIEW_HOST in public/js/app.js (which
+       is how the review screen knows to send reviewers back here) all have to
+       follow it. -->
   <footer class="sitefoot">
     <div class="rule-thin"></div>
     <div class="sitefoot__row">

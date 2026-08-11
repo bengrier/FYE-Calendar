@@ -52,8 +52,9 @@ ACCESS_AUD = "bb37e73ef092adb255287e8a4a7a92f5f30270ff806e59dab9c84e3af86d4d4a"
 # calendar.fyetools.com, which Access cannot cover — that domain's DNS is at
 # Hover, and an Access application needs a zone on this Cloudflare account.
 # /review on any other hostname redirects here so a reviewer always lands
-# somewhere they can actually sign in. The footer link in public/index.html
-# points at this same host and has to move with it.
+# somewhere they can actually sign in. The footer link in public/index.html and
+# REVIEW_HOST in public/js/app.js — which sends a reviewer back to the public
+# domain when they are done — both name this host and have to move with it.
 REVIEW_HOST = "fye-calendar.pages.dev"
 
 # Local development cannot present an Access JWT, so admin routes are

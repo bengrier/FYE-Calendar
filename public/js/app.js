@@ -1860,7 +1860,7 @@
          outlives the card it was made on. */
       state.note ? el("div", { class: "done__note", text: state.note }) : null,
       el("div", { class: "done__actions" },
-        el("button", { type: "button", class: "btn-primary", text: "Back to calendar", onClick: closeReview }))
+        el("button", { type: "button", class: "btn-primary", text: "Back to calendar", onClick: leaveReview }))
     ]);
   }
 
@@ -2104,7 +2104,7 @@
       csuHeader("Review Queue", "csu-header__title--sub",
         el("button", {
           type: "button", class: "btn-brand btn-brand--ghost btn-brand--sm",
-          text: "Back to calendar", onClick: closeReview
+          text: "Back to calendar", onClick: leaveReview
         })),
       /* Approving changes what this browser shows, not what the site serves.
          That gap is the one thing about this screen someone could get wrong,
@@ -2139,6 +2139,26 @@
      open, since another reviewer may have worked through it since. */
   function refreshQueue() {
     S.hydrate(true, true).catch(function () { /* reported by the store's state */ });
+  }
+
+  /* Reviewers arrive here from the footer link on calendar.fyetools.com, which
+     has to point at the Access host (REVIEW_HOST in wrangler.toml) because that
+     is the only hostname Access covers. Closing the overlay would leave them on
+     the pages.dev copy of the calendar — the same events, the wrong address, and
+     the one they would bookmark. So the button goes home instead.
+
+     Only that hostname redirects: localhost and preview deployments close in
+     place, so `wrangler pages dev` never throws anyone at production. Escape
+     still calls closeReview directly — dismissing a screen should not navigate. */
+  var REVIEW_HOST = "fye-calendar.pages.dev";
+  var PUBLIC_CALENDAR = "https://calendar.fyetools.com/";
+
+  function leaveReview() {
+    if (location.hostname === REVIEW_HOST) {
+      location.href = PUBLIC_CALENDAR;
+      return;
+    }
+    closeReview();
   }
 
   function closeReview() {
