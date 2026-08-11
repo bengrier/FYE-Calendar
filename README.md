@@ -124,6 +124,12 @@ ever disagree, the form will accept something the server rejects — so
 Uploads are checked on their **bytes**, not on the filename or the declared
 content type: a text file renamed `.png` and sent as `image/png` is refused.
 
+**Five accepted submissions per IP per hour**, after which the endpoint answers
+`429` with something a student can read. Only accepted submissions count, so
+nobody spends their allowance on their own typos, and the rows live in
+`submission_attempts` and are deleted as they age out. This is code rather than
+a Cloudflare rule for a reason given under "Deploying".
+
 ## Reviewing
 
 The **Review queue** link in the page footer. It points at `/review`, which is a
@@ -151,11 +157,24 @@ the reviewer's own mail client; approving and declining tell the reviewer to
 contact the submitter themselves. Set `CONFIG.office.email` in
 `public/js/data.js` for the reply address.
 
+## Where it is deployed
+
+| | |
+| --- | --- |
+| Students | <https://calendar.fyetools.com> |
+| Reviewers | <https://fye-calendar.pages.dev/review> — the **Review queue** link in the footer |
+
+Both addresses serve the same Pages project. They are two because Cloudflare
+Access can only cover the second, which is explained under "Deploying".
+
 ## Deploying
 
-1. Create the Pages project and point it at this repo. Build output directory
-   `public`, no build command.
-2. Create the database and bucket, and put the returned ID in `wrangler.toml`:
+Done once, on 2026-08-10. This is the record of what the steps actually are —
+several of them are not what they look like from the outside.
+
+**1. Create the database and bucket first**, before the Pages project, and put
+the returned ID in `wrangler.toml`. Creating the project first means its first
+build runs against a `database_id` that is still a placeholder.
 
 ```bash
 npx wrangler d1 create fye-calendar
@@ -165,7 +184,22 @@ npx wrangler d1 create fye-calendar
 npx wrangler r2 bucket create fye-calendar-flyers
 ```
 
-3. Apply the schema and seed to the real database:
+R2 fails with `code: 10042` until R2 is enabled in the dashboard, which asks for
+a payment method even though the free tier covers this comfortably.
+
+**2. Create the Pages project from the CLI**, not from the dashboard:
+
+```bash
+npx wrangler pages project create fye-calendar --production-branch cloudflare-backend
+```
+
+The dashboard's **Connect to Git** flow now creates a *Worker*, not a Pages
+project. A Worker serves `public/` correctly and then 404s every route in
+`functions/` — file-based routing is a Pages feature — so the site loads and the
+entire API is missing. That failure is quiet: the page renders, and only the
+data is gone.
+
+**3. Apply the schema and seed:**
 
 ```bash
 npx wrangler d1 execute fye-calendar --remote --file=schema.sql
@@ -175,18 +209,87 @@ npx wrangler d1 execute fye-calendar --remote --file=schema.sql
 npx wrangler d1 execute fye-calendar --remote --file=seed.sql
 ```
 
-4. In **Zero Trust → Access → Applications**, add a self-hosted application
-   covering `/review` and `/api/admin/*`, with a policy allowing the specific
-   `colostate.edu` addresses that should be able to approve events. Free for up
-   to 50 users.
-5. Copy the application's **AUD tag** and your team domain into the Pages
-   project's environment variables as `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN`.
+Run the seed even though its events are placeholders. It also inserts the
+`kind = 'fixed'` tag rows that mirror `GROUPS`, and without them the server
+treats every filter chip as an invented tag and drops it on approval.
 
-Until step 5 is done the admin API refuses every request. That is deliberate: an
+`schema.sql` **drops every table**. Never run it against a database with real
+submissions in it; for a later change, run the one statement you need.
+
+**4. Deploy:**
+
+```bash
+npx wrangler pages deploy --branch cloudflare-backend
+```
+
+Deploys are direct uploads. The project has no Git integration, so pushing to
+GitHub does not publish anything — someone runs this. That is the one piece of
+this arrangement worth revisiting.
+
+**5. Add One-time PIN as a login method**, in **Zero Trust → Settings →
+Authentication → Login methods**. A new organisation has only `cloudflare`,
+which authenticates whoever holds the Cloudflare account, and an Access
+application cannot offer a login method the organisation does not have.
+
+**6. Create the Access application.** **Zero Trust → Access → Applications →
+Self-hosted**, on `fye-calendar.pages.dev`, with **two** hostname entries:
+
+| Path | What it does |
+| --- | --- |
+| `review` | the path a human opens; this is what triggers the login |
+| `api/admin` | guards approve, decline, feedback and queue |
+
+Both, or nothing works: without the first nobody can sign in, and without the
+second the admin API is unguarded at the edge. Do not add an entry for `/`,
+which would lock students out of the calendar.
+
+Set the application to accept **One-time PIN** only, and write the policy as a
+single **Include → Emails** rule listing the approvers. Put the identity
+provider on the application, never in the policy — an `Authentication Method`
+rule inside `Include` denies people for a reason nobody thinks to look for.
+
+**7. Put the AUD tag and team domain in `wrangler.toml`**, as `ACCESS_AUD` and
+`ACCESS_TEAM_DOMAIN`, then deploy again.
+
+Not in the Pages dashboard. A `wrangler.toml` `[vars]` block overrides what the
+dashboard holds, so a value set there is replaced on the next deploy and the
+queue stays closed with nothing to explain it. Neither value is a credential:
+Access publishes the AUD in the query string of its own login redirect, which
+is also the easiest place to read it from.
+
+Until this step the admin API refuses every request. That is deliberate — an
 unconfigured deployment is a locked one, never an open one.
 
-6. Add a rate-limiting rule on `/api/submissions` — a few per IP per hour. It is
-   the one public write endpoint on a public site.
+**8. Add the custom domain.** Pages → Custom domains → `calendar.fyetools.com`,
+then a `CNAME` at the DNS provider pointing it at `fye-calendar.pages.dev`.
+
+### Why there are two addresses
+
+`fyetools.com` is registered at Hover and its DNS stays there, because the apex
+runs a live site that had no reason to be migrated. That has one consequence
+worth understanding, because it shapes several things above:
+
+**Cloudflare Access needs a zone on the Cloudflare account, and there is none.**
+So Access covers `fye-calendar.pages.dev` and cannot cover
+`calendar.fyetools.com`. Reviewers use the pages.dev address; `/review` on the
+custom domain redirects there, via `REVIEW_HOST`.
+
+Adding just the subdomain as a zone was the obvious escape and is not available:
+Cloudflare accepts only root domains except on paid plans.
+
+On the custom domain, `/api/admin/*` is therefore guarded by the JWT check in
+`functions/api/admin/_middleware.js` alone, with no edge in front of it. That is
+sound — the middleware verifies signature, audience, issuer and expiry, and
+refuses anything without a valid token — but it is one layer where the pages.dev
+hostname has two.
+
+**Rate limiting is a zone feature too**, which is why the limiter on
+`POST /api/submissions` is code in the Function rather than a dashboard rule.
+Five accepted submissions per IP per hour, counted in `submission_attempts`.
+
+If `fyetools.com` is ever moved onto Cloudflare, all of this collapses back into
+the simple version: one hostname, Access over it, a WAF rule instead of the
+table, and `REVIEW_HOST` unset.
 
 ## The seeded events are placeholders
 
@@ -220,12 +323,18 @@ The notice removes itself.
 a list from one they invented — change them here and re-run `seed.sql`, or the
 two will disagree about what counts as a new tag.
 
-Environment variables, set in the Pages dashboard:
+Environment variables, in `[vars]` in `wrangler.toml` rather than the Pages
+dashboard — see step 7 of "Deploying" for why that distinction matters:
 
 - `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` — the Access application. Unset means the
   admin API refuses everything.
-- `DEV_UNSAFE_NO_AUTH` — local only, via `.dev.vars`. Never set this in the
-  dashboard.
+- `REVIEW_HOST` — the one hostname Access covers. `/review` asked on any other
+  hostname redirects here, so a reviewer always lands somewhere they can sign
+  in. The footer link in `public/index.html` names the same host and has to move
+  with it. Unset, `/review` stays where it was asked, which is right for a
+  deployment where Access covers every hostname.
+- `DEV_UNSAFE_NO_AUTH` — local only, via `.dev.vars`. Never set this anywhere
+  else.
 
 The exported `.ics` writes times against an `America/Denver` VTIMEZONE. If this
 is ever reused off the Front Range, `TZID` in `public/js/ics.js` is the one thing

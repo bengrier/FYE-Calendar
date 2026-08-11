@@ -10,8 +10,14 @@ open.
 > login. A student submits from the site and it lands in a shared queue; a
 > reviewer signs in, approves, and it is live. No downloads, no email relay, no
 > editing code to publish. Written up at
-> [the bottom](#the-server-pass-2026-08-08). **Not deployed yet** — see
-> [Still open](#still-open).
+> [the bottom](#the-server-pass-2026-08-08).
+>
+> **2026-08-10 — it is deployed and working**, at
+> <https://calendar.fyetools.com>, with reviewers signing in at
+> <https://fye-calendar.pages.dev/review>. Every path has been exercised against
+> the live stack: submit, upload, queue, approve, publish, recurrence. What that
+> took, and the four places the plan was wrong, is at
+> [the very bottom](#the-deployment-pass-2026-08-10).
 
 <details>
 <summary>Three earlier designs, all superseded. Kept because each records why
@@ -44,9 +50,10 @@ them again.</summary>
 | | |
 | --- | --- |
 | Repo | <https://github.com/bengrier/FYE-Calendar> (public) |
-| Live today | <https://bengrier.github.io/FYE-Calendar/> — GitHub Pages, `main` / root. The static, email-based version. |
-| Next | Cloudflare Pages + Functions + D1 + R2, on branch `cloudflare-backend`. **Not deployed yet.** |
-| Accounts | GitHub and Cloudflare are both Ben Grier's personal accounts — see [the open item](#the-hosting-is-personal-and-that-is-now-a-decision) |
+| Live | <https://calendar.fyetools.com> — Cloudflare Pages + Functions + D1 + R2, branch `cloudflare-backend` |
+| Reviewers | <https://fye-calendar.pages.dev/review> — a second address on purpose; [why](#the-deployment-pass-2026-08-10) |
+| Also still up | <https://bengrier.github.io/FYE-Calendar/> — GitHub Pages, `main` / root. The old static, email-based version. |
+| Accounts | GitHub and Cloudflare are both Ben Grier's personal accounts, and the domain is his at Hover — see [the open item](#the-hosting-is-personal-and-that-is-now-a-decision) |
 | Origin | Implemented from the Claude Design prototype `Community Calendar.dc.html` (project `969b693a-9fb3-4ad4-ae08-0e5ed698d1f3`), on the Broadsheet design system |
 
 Scripts are classic (non-module), which is why there is still no bundler and no
@@ -55,14 +62,19 @@ filesystem; the server pass ended that, but the simplicity was worth keeping.
 
 ## State
 
-`main` holds the static, email-based calendar and is what is live. It works, and
-it should keep serving until the replacement is signed off.
+`cloudflare-backend` is the live calendar: submissions go straight into a
+database, approvers sign in, approving publishes immediately. Deployed
+2026-08-10 and exercised end to end against the real stack.
 
-`cloudflare-backend` holds the server rebuild: submissions go straight into a
-database, approvers sign in, approving publishes immediately. Built and tested
-locally against D1 and R2; **nothing is deployed**. See
-[Still open](#still-open) for what remains, and README's "Deploying" for the
-steps.
+`main` still holds the old static, email-based calendar and GitHub Pages still
+serves it. Nothing points at it any more. It costs nothing to leave up while the
+new one is being watched, and it should be taken down — or `main` replaced with
+this branch — once the office has signed off, because two live calendars is a
+thing somebody will eventually find the wrong one of.
+
+The one thing that is not as it should be: **deploys are direct uploads.**
+`npx wrangler pages deploy` publishes; pushing to GitHub does not. See
+[Still open](#still-open).
 
 Working tree clean as of writing.
 
@@ -194,14 +206,28 @@ PDF stay in step.
 
 ### Still open
 
-**Nothing is deployed.** Everything is built and tested against local D1 and R2
-through `wrangler pages dev`. The Pages project, the database, the bucket and
-the Access application do not exist yet. README's "Deploying" is the list, and
-step 5 is the one that matters: until `ACCESS_AUD` and `ACCESS_TEAM_DOMAIN` are
-set, the review API refuses every request.
+**Deploys are direct uploads, not pushes.** The Pages project has no Git
+integration, because the dashboard's Connect-to-Git flow builds a Worker rather
+than a Pages project and a Worker cannot run `functions/`. So publishing means
+somebody with wrangler and the account runs `npx wrangler pages deploy`, which
+is exactly the single-person dependency this whole rebuild existed to remove —
+for publishing *events* it is solved, for publishing *the site* it is not. Worth
+revisiting whether Pages Git integration can be attached to an existing project,
+or whether the app should be converted to a Worker with static assets, which is
+where Cloudflare is steering everything anyway.
+
+**There are 23 placeholder events and one test event on the live calendar.**
+The placeholders announce themselves; the test event does not. README's "The
+seeded events are placeholders" has the command for the first, and the second is
+three rows from a weekly repeat.
 
 **`CONFIG.office.email` is empty.** One line, and it only affects the To: field
 on a reviewer's *Request changes* reply. Nothing depends on it any more.
+
+**Two addresses, one of which Access cannot protect.** Reviewers must use the
+pages.dev host. `/review` on the custom domain redirects there, so it is handled
+rather than merely documented, but it is a consequence of where the DNS lives
+and it would go away if `fyetools.com` moved onto Cloudflare.
 
 ### The hosting is personal, and that is now a decision
 
@@ -210,42 +236,50 @@ same way it already runs on his own GitHub account. That is a reasonable place
 to start and a bad place to stay, so it is written down here rather than left to
 be discovered.
 
-What it means concretely, once there is real data in it:
+Since 2026-08-10 there is real data in it, and a third personal account in the
+chain: **the domain.** `fyetools.com` is registered at Hover, personally, and
+`calendar.fyetools.com` is a CNAME there. The address students are given depends
+on a registration renewing.
+
+What it means concretely:
 
 - The events database, the flyer bucket and the list of who may approve events
-  all live in one personal account. Nobody else can reach any of it.
-- If that account is lost — leaving CSU, a forgotten password, an unpaid card on
-  a later paid plan — the calendar goes down and the office cannot bring it
-  back. This is different in kind from the GitHub risk: the repo is cloned on
-  disk and could be re-hosted in an afternoon, but the submissions and approvals
-  only exist in D1.
+  all live in one personal Cloudflare account. Nobody else can reach any of it.
+- The address depends on a personal Hover account. Nothing in Cloudflare can
+  keep the calendar reachable if that lapses.
+- If either account is lost — leaving CSU, a forgotten password, an unpaid card
+  — the calendar goes down and the office cannot bring it back. This is
+  different in kind from the GitHub risk: the repo is cloned on disk and could
+  be re-hosted in an afternoon, but the submissions and approvals only exist
+  in D1.
 
-Three things that make that survivable, in order of how much they buy:
+Four things that make that survivable, in order of how much they buy:
 
 1. **Add a second admin to the Cloudflare account** — someone in the office,
    under Manage Account → Members. Costs nothing, takes a minute, and is the
    single thing most worth doing.
 2. **Back up the database.** `npx wrangler d1 export fye-calendar --remote
    --output=backup.sql` produces a file that could rebuild everything. Run it
-   occasionally; keep it somewhere the office can reach.
-3. **Write down where the account is** and who holds it, somewhere the office
-   looks — not only in this file.
+   occasionally; keep it somewhere the office can reach. There is nothing
+   automatic doing this.
+3. **Decide whether the address should be personal.** A CSU-owned hostname
+   pointed at the same Pages project would cost nothing technically — it is one
+   CNAME — and would take the domain out of the chain entirely.
+4. **Write down where the accounts are** and who holds them, somewhere the
+   office looks — not only in this file.
 
-None of that blocks deployment. It is what stops a working calendar from having
+None of this blocked deployment. It is what stops a working calendar from having
 a single person as its only dependency.
 
-### Deployment is the next task
+### Deployment is done
 
-It was deliberately not done in the session that built this, because it needs a
-login. Start from README's "Deploying", and note:
+2026-08-10. README's "Deploying" is now a record of the real steps rather than a
+plan, and it differs from the plan in four places worth knowing before touching
+any of it — all four are written up in
+[the deployment pass](#the-deployment-pass-2026-08-10).
 
-- `wrangler.toml` has `database_id = "REPLACE_WITH_ID_FROM_wrangler_d1_create"`.
-  That is the one placeholder that must be filled in.
-- Do it on this branch, `cloudflare-backend`. `main` still serves the working
-  email-based site on GitHub Pages, and should keep doing so until the new one
-  is signed off.
-- The two GitHub Pages and Cloudflare Pages deployments can run side by side for
-  as long as it takes to be confident. They share a repo but not a branch.
+The GitHub Pages and Cloudflare Pages deployments still run side by side. They
+share a repo but not a branch, and nothing points at the old one.
 
 ## Notes for whoever extends this
 
@@ -669,7 +703,9 @@ an interface that no longer has to explain itself.
 
 The three passes above this one are all superseded — they are kept because each
 records why an approach that looks obvious does not work, and somebody will
-propose one of them again. If you only read one thing, read
+propose one of them again. This one is the current design, and
+[the pass below](#the-deployment-pass-2026-08-10) is what happened when it met
+the actual platform. If you only read one thing, read
 [Still open](#still-open).
 
 The short version of where the code is:
@@ -680,4 +716,119 @@ The short version of where the code is:
 | Data | D1, seeded from `seed.sql`. No localStorage, no content in the JS |
 | API | `functions/api/` — `admin/` is behind Cloudflare Access |
 | The seam | `public/js/store.js`: synchronous reads from a cache, async mutations |
-| Deployed | Not yet. That is the next task |
+| Deployed | Live since 2026-08-10. `npx wrangler pages deploy` publishes; a push does not |
+
+## The deployment pass, 2026-08-10
+
+The three passes above end with a design nobody had proved. This one deployed
+it. It works, and the four things below are the ones that were not visible from
+inside the code.
+
+### The dashboard builds a Worker, and Workers do not run `functions/`
+
+**Connect to Git** in the Cloudflare dashboard no longer creates a Pages
+project. It creates a Worker with static assets, which serves `public/`
+perfectly and 404s every route under `functions/` — file-based routing is a
+Pages feature. The site came up looking finished, with the calendar rendering
+nothing and every API call missing.
+
+That failure mode is worth naming because it is quiet: the HTML, the CSS, the
+JavaScript and the committed flyers all served correctly, and only the data was
+gone. `wrangler pages project list` returning nothing is what actually proves
+which of the two you have.
+
+`npx wrangler pages project create` still works, and a Pages project created
+that way compiles `functions/` exactly as designed.
+
+The cost of that route is that the project has no Git integration, so deploys
+are direct uploads. See [Still open](#still-open) — this is the one part of the
+arrangement that is worse than what it replaced.
+
+### Cloudflare Access needs a zone, and there is no zone
+
+Access was the reason to be on Cloudflare at all. It gates the review queue
+against an allow-list at the edge, and it is why no password hashing, session
+handling or reset flow was ever written here.
+
+A self-hosted Access application can only be created for a hostname in a zone on
+the Cloudflare account. `fyetools.com` is registered at Hover and stays there —
+its apex runs a live site that had no reason to be migrated for a calendar — so
+there is no zone, and `calendar.fyetools.com` cannot be covered.
+
+Adding only the subdomain as a zone is the obvious escape and is not available:
+Cloudflare accepts root domains only, except on paid plans.
+
+What was done instead: Access covers `fye-calendar.pages.dev`, which it does
+accept, and reviewers use that address. `/review` on the custom domain redirects
+there so nobody has to know. On the custom domain `/api/admin/*` is guarded by
+the JWT check in the middleware alone — sound, since that check verifies
+signature, audience, issuer and expiry, but one layer where the other hostname
+has two.
+
+The middleware was written to survive exactly this — "a request arriving by some
+other route is still refused" — which is the difference between a consequence
+and a hole.
+
+### `#review` is a fragment, and a fragment never reaches the server
+
+The plan said to protect `/review`. There was no `/review`: the screen is
+`#review`, dispatched client-side, and a fragment is never sent to a server. An
+Access application pointed at that path would have sat there and never fired.
+
+The queue would still have been safe, because `/api/admin/*` is a real path. But
+the login would never have happened. A reviewer opens the page, it loads
+unchallenged, its first background fetch for the queue is answered with a
+redirect to a login form, and a `fetch` cannot perform an interactive login.
+The result is a failure with no way out of it.
+
+`functions/review.js` exists to be that path. It takes the challenge and then
+hands the reviewer to the screen, where every subsequent call carries the cookie
+Access set.
+
+This is the shape of bug the earlier passes kept finding — a cache key that
+omitted the anchor date, a load state left out of another — and it is the same
+lesson: the thing that breaks is the case nobody thought was a case.
+
+### Rate limiting is a zone feature too
+
+The plan was a Cloudflare rate limiting rule on `/api/submissions`, and
+`functions/api/submissions.js` said so in a comment, with a good argument: at
+the edge it costs nothing and cannot be reasoned around.
+
+Rate limiting rules belong to a zone. Same absence, same consequence. So the
+limiter is code — five accepted submissions per IP per hour, counted in
+`submission_attempts`, rows deleted as they age out.
+
+Two deliberate details. It counts **accepted** submissions rather than requests,
+so a student fighting a validation message does not spend their allowance on
+their own typing, and what is actually being rationed is rows in the office's
+queue. And the count is written in the same `batch` as the submission, so it
+cannot drift from the queue in either direction.
+
+If `fyetools.com` ever moves onto Cloudflare, this becomes a WAF rule and the
+table goes away.
+
+### Shift+R was replaced by something findable
+
+The review queue's only entrance was a keyboard shortcut that nothing on the
+page mentioned. It worked for whoever had been told about it, which is a
+reasonable thing during development and not a reasonable thing to hand an
+office. The footer now carries the link.
+
+Nothing is lost by that link being public: Access refuses everyone not on the
+allow-list before the request reaches the app.
+
+### What was verified, and how
+
+Not by reading. Against the live stack: a submission with a flyer and a weekly
+repeat stopping after three weeks, reviewed and approved, producing three events
+on the calendar. That exercised D1, R2 in both directions, the Access challenge,
+the JWT verification, the client and server agreeing on `occurrences`, and the
+approve path writing the reviewer's identity.
+
+The rate limiter was tested by driving the counter to its limit and confirming
+the 429 on both hostnames, then deleting the test rows.
+
+Left behind deliberately: the 23 placeholder events, which announce themselves,
+and one approved test event which does not. Both are in
+[Still open](#still-open).
