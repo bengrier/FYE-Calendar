@@ -17,7 +17,8 @@ open.
 > <https://fye-calendar.pages.dev/review>. Every path has been exercised against
 > the live stack: submit, upload, queue, approve, publish, recurrence. What that
 > took, and the four places the plan was wrong, is at
-> [the very bottom](#the-deployment-pass-2026-08-10).
+> [the very bottom](#the-deployment-pass-2026-08-10). Changes made since then
+> are logged under [Since deployment](#since-deployment).
 
 <details>
 <summary>Three earlier designs, all superseded. Kept because each records why
@@ -832,3 +833,35 @@ the 429 on both hostnames, then deleting the test rows.
 Left behind deliberately: the 23 placeholder events, which announce themselves,
 and one approved test event which does not. Both are in
 [Still open](#still-open).
+
+## Since deployment
+
+Small changes made against the live site. Each one is deployed and confirmed
+working; the passes above are left as the record of the day they describe.
+
+### 2026-08-11 — the reviewer's way back
+
+The two-hostname split has a return trip, and it was missing. Access covers
+`fye-calendar.pages.dev` and cannot cover `calendar.fyetools.com`
+([why](#cloudflare-access-needs-a-zone-and-there-is-no-zone)), so the footer
+link sends reviewers to the other hostname to sign in — and "Back to calendar"
+then closed the review overlay in place and left them standing on the pages.dev
+copy of the calendar. The right events at the wrong address, and the address
+they would bookmark, tell a colleague about, and eventually be confused by when
+Access challenges them for a calendar the students read without signing in.
+
+The button now navigates to `https://calendar.fyetools.com/` when it is on the
+Access host, and closes the overlay in place everywhere else, so
+`wrangler pages dev` does not throw anyone at production. Escape still calls
+`closeReview` directly: dismissing a screen should not navigate to another host.
+
+That leaves the hostname written in three files, which is the part to know
+about. `REVIEW_HOST` in `wrangler.toml` (where `/review` redirects to),
+the footer link in `public/index.html` (how reviewers get there), and
+`REVIEW_HOST` in `public/js/app.js` (how they get back). Each carries a comment
+naming the other two. If the Access application ever moves, all three move.
+
+Not extracted into one shared constant on purpose: they are read by three
+different runtimes — the Functions env, static HTML, and a classic script with
+no build step — and there is no place all three can import from without adding
+a bundler that this project has stayed free of.
