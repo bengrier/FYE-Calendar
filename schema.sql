@@ -9,6 +9,7 @@
 -- the same reason: an event must never slide a day across a time zone.
 -- Timestamps are epoch milliseconds.
 
+DROP TABLE IF EXISTS submission_attempts;
 DROP TABLE IF EXISTS submission_tags;
 DROP TABLE IF EXISTS event_tags;
 DROP TABLE IF EXISTS submissions;
@@ -84,3 +85,17 @@ CREATE TABLE submission_tags (
   is_new        INTEGER NOT NULL DEFAULT 0,   -- proposed by the submitter, not yet approved
   PRIMARY KEY (submission_id, tag)
 );
+
+-- One row per submission actually accepted, used to rate limit the one public
+-- write endpoint. Rows older than the window are deleted on the way past, so
+-- this stays a handful of rows rather than a log — it is a counter that happens
+-- to be made of rows, and nothing reads it but the limiter.
+--
+-- This lives in the database because a Cloudflare rate limiting rule is a zone
+-- feature and this deployment has no zone. See functions/api/submissions.js.
+CREATE TABLE submission_attempts (
+  ip TEXT NOT NULL,
+  at INTEGER NOT NULL
+);
+
+CREATE INDEX submission_attempts_by_ip ON submission_attempts (ip, at);

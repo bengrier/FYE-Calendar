@@ -5,14 +5,54 @@
    key this API itself issued, and nothing it writes is visible to anybody until
    a reviewer approves it.
 
-   Rate limiting is a Cloudflare rule on this path rather than code — it belongs
-   at the edge, where it costs nothing and cannot be reasoned around. */
+   Rate limiting is done here in code, which is the second choice. A Cloudflare
+   rate limiting rule would be better — it costs nothing, runs before any of
+   this, and cannot be reasoned around — but such a rule belongs to a zone, and
+   this deployment has none: it is served from a pages.dev hostname and from a
+   custom domain whose DNS is not on Cloudflare. If that domain is ever moved
+   onto the account, replace this with an edge rule and delete the table. */
 
 import { json, fail, methodNotAllowed, readJson, uid } from "../_lib/http.js";
 import { validateSubmission } from "../_lib/submission.js";
 
+var WINDOW_MS = 60 * 60 * 1000;
+var LIMIT = 5;
+
+/* Counts only submissions that were actually accepted, not requests made. A
+   student fixing a validation message would otherwise spend their allowance on
+   their own typing, and the thing being rationed is rows in the office's queue.
+   A flood of malformed bodies still creates nothing; it costs reads. */
+async function overLimit(db, ip) {
+  if (!ip) return false;
+
+  await db
+    .prepare("DELETE FROM submission_attempts WHERE at < ?")
+    .bind(Date.now() - WINDOW_MS)
+    .run();
+
+  var row = await db
+    .prepare("SELECT COUNT(*) AS n FROM submission_attempts WHERE ip = ?")
+    .bind(ip)
+    .first();
+
+  return !!row && row.n >= LIMIT;
+}
+
 export async function onRequest(context) {
   if (context.request.method !== "POST") return methodNotAllowed("POST");
+
+  /* Set by Cloudflare on every request that reaches a Function, and not
+     forgeable by the client — an inbound CF-Connecting-IP header is replaced,
+     not passed through. */
+  var ip = context.request.headers.get("CF-Connecting-IP") || "";
+
+  if (await overLimit(context.env.DB, ip)) {
+    return fail(
+      429,
+      "That is a lot of submissions from one place in an hour. Wait a little, " +
+      "or email the office if you have several events to send at once."
+    );
+  }
 
   var body = await readJson(context.request);
   var todayIso = new Date().toISOString().slice(0, 10);
@@ -72,6 +112,16 @@ export async function onRequest(context) {
         .bind(id, tag, known.has(tag) ? 0 : 1)
     );
   });
+
+  /* Recorded in the same batch as the submission, so the count can never drift
+     from what is actually in the queue in either direction. */
+  if (ip) {
+    statements.push(
+      db
+        .prepare("INSERT INTO submission_attempts (ip, at) VALUES (?, ?)")
+        .bind(ip, Date.now())
+    );
+  }
 
   await db.batch(statements);
 
