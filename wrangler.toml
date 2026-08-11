@@ -33,11 +33,28 @@ bucket_name = "fye-calendar-flyers"
 [vars]
 # Cloudflare Access gates /review and /api/admin/* at the edge; the Functions
 # verify the Access JWT as well, so a request that reaches them another way is
-# still refused. Set both of these in the Pages dashboard after creating the
-# Access application. While they are unset the admin API refuses everything —
-# it fails closed, never open.
-ACCESS_TEAM_DOMAIN = ""
-ACCESS_AUD = ""
+# still refused. While these are unset the admin API refuses everything — it
+# fails closed, never open.
+#
+# They live here rather than in the Pages dashboard because this file is the
+# deployment's configuration: a wrangler.toml [vars] block overrides whatever
+# the dashboard holds, so a value set there would be silently replaced on the
+# next deploy and the queue would stay closed for no visible reason.
+#
+# Neither is a credential. The team domain is in the URL every approver visits,
+# and the AUD is a public identifier for the application — Access publishes it
+# in the query string of its own login redirect. What makes a token trustworthy
+# is its signature, which is checked in _middleware.js against the team's JWKS.
+ACCESS_TEAM_DOMAIN = "spring-sun-620e.cloudflareaccess.com"
+ACCESS_AUD = "bb37e73ef092adb255287e8a4a7a92f5f30270ff806e59dab9c84e3af86d4d4a"
+
+# The one hostname the Access application covers. The site also answers on
+# calendar.fyetools.com, which Access cannot cover — that domain's DNS is at
+# Hover, and an Access application needs a zone on this Cloudflare account.
+# /review on any other hostname redirects here so a reviewer always lands
+# somewhere they can actually sign in. The footer link in public/index.html
+# points at this same host and has to move with it.
+REVIEW_HOST = "fye-calendar.pages.dev"
 
 # Local development cannot present an Access JWT, so admin routes are
 # unreachable with the settings above. Put
