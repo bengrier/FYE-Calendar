@@ -1018,3 +1018,22 @@ Not extracted into one shared constant on purpose: they are read by three
 different runtimes — the Functions env, static HTML, and a classic script with
 no build step — and there is no place all three can import from without adding
 a bundler that this project has stayed free of.
+
+### 2026-08-11 — Escape leaves the slide show, not just fullscreen
+
+Escape on the slide show made the screen smaller and nothing else. The key
+handler had always called `stopSlideshow`, but it never ran: inside fullscreen
+Escape belongs to the browser, which uses it to drop the page back to a window
+and does not deliver the keydown at all. So the overlay stayed up at window
+size, and a second Escape — now that the page was windowed and the handler
+could see the key — closed it. Two presses for one intention, on a screen whose
+whole audience is somebody walking up to a lobby display.
+
+Leaving fullscreen while the slide show is running now means the same thing as
+pressing Exit, via a `fullscreenchange` listener in `public/js/app.js`. It does
+not loop, because the Exit button clears `state.slideshow` before it calls
+`exitFullscreen`, so the change event it causes finds nothing to close.
+
+Worth one press on a real full-screen display: the in-app preview browser
+refuses `requestFullscreen`, so the path was exercised by dispatching the event
+rather than by actually being fullscreen.

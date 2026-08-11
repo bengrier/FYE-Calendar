@@ -2396,6 +2396,14 @@
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("popstate", applyRoute);
 
+    /* Escape inside fullscreen belongs to the browser: it drops the page back
+       to its window and never reaches onKeyDown, which left the slideshow up
+       as a merely-smaller overlay. Leaving fullscreen while it is running means
+       the same thing as pressing Exit, so send it down the same path. */
+    document.addEventListener("fullscreenchange", function () {
+      if (!document.fullscreenElement && state.slideshow) stopSlideshow();
+    });
+
     /* Coming back to a tab that has been open since yesterday should not show
        yesterday as today. */
     document.addEventListener("visibilitychange", function () {
