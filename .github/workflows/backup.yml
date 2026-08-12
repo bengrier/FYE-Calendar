@@ -1,9 +1,9 @@
-# Back the database up on a schedule, because nothing else does.
+# Back up everything that exists only in the Cloudflare account, on a schedule.
 #
-# D1 is the only place the submissions and approvals exist. The repo is cloned
-# on several disks and could be re-hosted in an afternoon; the queue could not.
-# Handoff.md has said "run it occasionally" since 2026-08-10, which in practice
-# means a backup nobody takes.
+# Two things live nowhere else: the D1 database — every submission and every
+# approval — and the flyer artwork in R2 that submitters uploaded. The repo is
+# cloned on several disks and could be re-hosted in an afternoon. Neither of
+# those could.
 #
 # Pages Functions have no scheduled handler — that is a Worker feature, and this
 # is a Pages project precisely because a Worker cannot run functions/ — so the
@@ -11,16 +11,35 @@
 # which is also the point: a backup stored in the same account it insures
 # against losing is not a backup.
 #
-# ── The dump is encrypted, and that is not decoration ────────────────────────
+# ── This is a rebuild kit, not just a database dump ──────────────────────────
 #
-# This repository is PUBLIC, and a D1 export contains every submitter's name and
+# Decided 2026-08-12, when a second admin on the Cloudflare account was ruled
+# out. With no second pair of hands on the account, the backup has to be
+# sufficient on its own to stand the whole calendar up somewhere else, so it
+# carries the uploaded flyers as well as the database. A dump that restores
+# every event with its artwork missing is a bad surprise to find during the
+# week you are already having.
+#
+# The keys are read out of the dump itself rather than by walking the bucket,
+# so the artwork in the archive is exactly the artwork the rows in that same
+# archive point at. Orphaned objects are deliberately not collected — the
+# retention sweep exists to delete those, and a backup that faithfully preserved
+# rubbish would only restore it.
+#
+# The seeded flyers (`peru`, `ispe`, …) are NOT here and do not need to be: they
+# are committed files in public/flyers/, so the repo already holds them. Only
+# `f-` keys are R2 objects.
+#
+# ── The archive is encrypted, and that is not decoration ─────────────────────
+#
+# This repository is PUBLIC, and the dump contains every submitter's name and
 # real @colostate.edu address. Two consequences, both load-bearing:
 #
-#   1. The dump is never committed. It is written to the runner and uploaded as
-#      an artifact; nothing here writes into the working tree.
+#   1. Nothing is committed. Everything is written to the runner and uploaded as
+#      an artifact; no step here writes into the working tree.
 #   2. Artifacts are readable by anyone who can read the repository, and on a
-#      public repository that is everyone. So the dump is encrypted with a
-#      passphrase before it is uploaded, and the artifact is ciphertext.
+#      public repository that is everyone. So the archive is encrypted before it
+#      is uploaded, and the artifact is ciphertext.
 #
 # If this repository is ever made private, the encryption is still correct and
 # costs nothing. Do not remove it on the grounds that the repo is private now —
@@ -28,10 +47,14 @@
 #
 # Three secrets, in Settings → Secrets and variables → Actions:
 #
-#   CLOUDFLARE_API_TOKEN   — the same token the deploy workflow uses. `d1 export`
-#                            needs Account → D1 → **Edit**, not Read: the export
-#                            is a write as far as the API is concerned, since it
-#                            builds a temporary object and hands back a link.
+#   CLOUDFLARE_API_TOKEN   — the same token the deploy workflow uses. It needs
+#                            three permissions, all at Account level:
+#                              Cloudflare Pages  → Edit   (the deploy)
+#                              D1                → Edit   (the export; Edit
+#                                                          rather than Read,
+#                                                          since an export is a
+#                                                          write to the API)
+#                              Workers R2 Storage → Read  (the flyers)
 #   CLOUDFLARE_ACCOUNT_ID  — 19afe22934d229971259f29ef3f7700f.
 #   BACKUP_PASSPHRASE      — invent a long random one and put it in the office's
 #                            password manager, NOT only in GitHub. A backup you
@@ -44,22 +67,23 @@
 #
 #   openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
 #     -pass pass:'THE PASSPHRASE' \
-#     -in fye-calendar-YYYY-MM-DD.sql.enc -out fye-calendar.sql
+#     -in fye-calendar-YYYY-MM-DD.tar.gz.enc -out backup.tar.gz
+#
+#   tar -xzf backup.tar.gz
 #
 # openssl rather than gpg specifically so that line works on a stock Mac with
-# nothing installed. It was checked, not assumed: a real dump encrypted by
+# nothing installed. It was checked, not assumed: a real archive encrypted by
 # OpenSSL 3.6 was decrypted byte-identically by the LibreSSL 3.3 at
 # /usr/bin/openssl that macOS ships, and a wrong passphrase fails loudly rather
 # than producing plausible rubbish.
 #
-# That file is plain SQL: CREATE TABLE statements and INSERTs. To rebuild into a
-# fresh database, `wrangler d1 create` a new one and execute the file against
-# it. Do NOT execute it against a live database with real rows in it — like
-# schema.sql, it recreates tables.
+# That gives a `.sql` file and a `flyers/` directory. README's "Rebuilding from
+# a backup" is the procedure for turning those into a running calendar on a
+# different account.
 #
-# Worth reading it before trusting it. `sqlite3 fye-calendar.sql` locally and a
-# count of the events and submissions tables takes a minute and is the only
-# thing that actually proves a backup is a backup.
+# Worth reading it before trusting it. `sqlite3` over the .sql file and a count
+# of the events and submissions tables takes a minute and is the only thing that
+# actually proves a backup is a backup.
 
 name: Backup database
 
@@ -78,7 +102,7 @@ concurrency:
 jobs:
   backup:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
 
@@ -95,7 +119,7 @@ jobs:
         # the missing secret. Fail first and name the secret.
         run: |
           if [ -z "$BACKUP_PASSPHRASE" ]; then
-            echo "::error::BACKUP_PASSPHRASE is not set. The dump holds real student email addresses and is not uploaded unencrypted."
+            echo "::error::BACKUP_PASSPHRASE is not set. The backup holds real student email addresses and is not uploaded unencrypted."
             exit 1
           fi
 
@@ -122,38 +146,91 @@ jobs:
             exit 1
           fi
 
-      - name: Encrypt
+      - name: Fetch the flyers those rows point at
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          FILE="fye-calendar-$(date -u +%Y-%m-%d).sql"
+          mkdir -p flyers
+
+          # `f-<base36 time>-<6 base36>.<ext>`, the format functions/_lib/http.js
+          # uid() produces and functions/api/flyers.js appends a sniffed
+          # extension to. Anchored on that shape so a stray word in a blurb can
+          # never be mistaken for a key.
+          KEYS=$(grep -oE "f-[0-9a-z]+-[0-9a-z]+\.(pdf|jpg|png|gif|webp)" "$FILE" | sort -u)
+
+          if [ -z "$KEYS" ]; then
+            echo "No uploaded flyers are referenced. Nothing to fetch."
+            echo "FLYER_COUNT=0" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          TOTAL=0; OK=0
+          for KEY in $KEYS; do
+            TOTAL=$((TOTAL + 1))
+            if npx --yes wrangler@4.121.0 r2 object get "fye-calendar-flyers/$KEY" \
+                 --remote --file="flyers/$KEY" >/dev/null 2>&1; then
+              OK=$((OK + 1))
+            else
+              # One missing object must not cost the database backup. The
+              # retention sweep can legitimately delete a flyer between the
+              # export and this step, and a row can outlive its artwork.
+              echo "::warning::Could not fetch $KEY — continuing without it."
+            fi
+          done
+
+          echo "Flyers: $OK of $TOTAL fetched."
+          echo "FLYER_COUNT=$OK" >> "$GITHUB_ENV"
+
+          # But *every* fetch failing is not a missing object, it is a broken
+          # credential — almost certainly the token lacking
+          # Workers R2 Storage → Read. Silently shipping an artwork-less archive
+          # every week until somebody needs one is the failure worth preventing.
+          if [ "$OK" -eq 0 ]; then
+            echo "::error::Every flyer fetch failed. Check the API token has Account → Workers R2 Storage → Read."
+            exit 1
+          fi
+
+      - name: Bundle and encrypt
         env:
           BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
         run: |
-          FILE="fye-calendar-$(date -u +%Y-%m-%d).sql"
+          STAMP="$(date -u +%Y-%m-%d)"
+          FILE="fye-calendar-$STAMP.sql"
+
+          tar -czf "fye-calendar-$STAMP.tar.gz" "$FILE" flyers
+          rm -rf "$FILE" flyers
+
           openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
             -pass env:BACKUP_PASSPHRASE \
-            -in "$FILE" -out "$FILE.enc"
+            -in "fye-calendar-$STAMP.tar.gz" -out "fye-calendar-$STAMP.tar.gz.enc"
           # -pass env: rather than -pass pass:, so the passphrase is never a
           # word in a command line any other process on the runner could read.
           #
           # The plaintext never leaves this step. Every later step, and the
           # artifact, sees only the ciphertext.
-          rm -f "$FILE"
+          rm -f "fye-calendar-$STAMP.tar.gz"
 
           # Prove the file that is about to be uploaded actually opens. An
           # unverified backup is a guess, and this is the only moment the
           # passphrase and the ciphertext are ever in the same place.
           openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
             -pass env:BACKUP_PASSPHRASE \
-            -in "$FILE.enc" -out /tmp/verify.sql
-          if ! grep -q "^INSERT INTO" /tmp/verify.sql; then
+            -in "fye-calendar-$STAMP.tar.gz.enc" -out /tmp/verify.tar.gz
+
+          tar -xzf /tmp/verify.tar.gz -C /tmp
+          if ! grep -q "^INSERT INTO" "/tmp/$FILE"; then
             echo "::error::The encrypted backup did not decrypt back to readable SQL. Not uploading it."
             exit 1
           fi
-          echo "Verified: decrypts to $(grep -c '^INSERT INTO' /tmp/verify.sql) INSERT statements."
-          rm -f /tmp/verify.sql
+          echo "Verified: decrypts to $(grep -c '^INSERT INTO' "/tmp/$FILE") INSERT statements and $FLYER_COUNT flyer(s)."
+          rm -rf /tmp/verify.tar.gz "/tmp/$FILE" /tmp/flyers
 
       - uses: actions/upload-artifact@v4
         with:
           name: fye-calendar-backup
-          path: "*.sql.enc"
+          path: "*.tar.gz.enc"
           # A year of weekly backups. The default is 90 days, which is shorter
           # than the gap between someone breaking something and someone
           # noticing over a summer.

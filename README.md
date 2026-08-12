@@ -304,15 +304,24 @@ table, and `REVIEW_HOST` unset.
 
 ## Backups
 
-D1 is the only place submissions and approvals exist. The repo is cloned on
-several disks and could be re-hosted in an afternoon; the queue could not.
+Two things exist only inside the Cloudflare account: the D1 database — every
+submission and every approval — and the flyer artwork submitters uploaded to
+R2. The repo is cloned on several disks and could be re-hosted in an afternoon.
+Neither of those could.
 
-[`.github/workflows/backup.yml`](.github/workflows/backup.yml) exports the
-database every Sunday and uploads it as an encrypted artifact, kept a year. It
-can also be run on demand from the Actions tab. The schedule lives in GitHub
-rather than Cloudflare for two reasons: Pages Functions have no scheduled
-handler, and a backup stored in the account it insures against losing is not a
-backup.
+[`.github/workflows/backup.yml`](.github/workflows/backup.yml) takes both every
+Sunday and uploads them as one encrypted artifact, kept a year. It can also be
+run on demand from the Actions tab. The schedule lives in GitHub rather than
+Cloudflare for two reasons: Pages Functions have no scheduled handler, and a
+backup stored in the account it insures against losing is not a backup.
+
+**It is a rebuild kit, not just a dump.** There is deliberately no second admin
+on the Cloudflare account, so the backup has to be sufficient on its own to
+stand the calendar up somewhere else — which means the artwork travels with the
+rows that point at it. The flyer keys are read out of the dump itself, so the
+archive is internally consistent: exactly the artwork the rows in that same
+archive reference. Seeded flyers are not included and do not need to be, since
+`public/flyers/` is in the repo.
 
 To take one by hand:
 
@@ -330,17 +339,49 @@ the obvious filenames, but the habit is what matters — the export command as
 written in older notes drops `backup.sql` straight into the repo root.
 
 That is also why the workflow encrypts before uploading: artifacts on a public
-repository are readable by anyone who can read the repository. Restoring is one
-`openssl` command, documented at the top of the workflow.
+repository are readable by anyone who can read the repository.
 
-Two things the workflow cannot do, both of which are open items in
-[Handoff.md](Handoff.md):
+The one thing the workflow cannot do for itself: **the passphrase must exist
+somewhere other than GitHub.** Put `BACKUP_PASSPHRASE` in the office's password
+manager. GitHub will not show it to you again, and a backup nobody can decrypt
+is not a backup.
 
-- **A second admin on the Cloudflare account** is worth more than any backup.
-  It costs nothing and takes a minute: Manage Account → Members.
-- **The passphrase must exist somewhere other than GitHub.** Put
-  `BACKUP_PASSPHRASE` in the office's password manager. GitHub will not show it
-  to you again, and a backup nobody can decrypt is not a backup.
+### Rebuilding from a backup
+
+This is the procedure that stands in for a second pair of hands on the
+Cloudflare account. It has not been rehearsed end to end — **worth doing once
+before it is ever needed**, on a throwaway account, rather than for the first
+time during the week you are already having.
+
+Unpack the artifact first:
+
+```bash
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass pass:'THE PASSPHRASE' -in fye-calendar-YYYY-MM-DD.tar.gz.enc -out backup.tar.gz && tar -xzf backup.tar.gz
+```
+
+That gives a `.sql` file and a `flyers/` directory. Then, from a clone of this
+repo on any Cloudflare account:
+
+1. `npx wrangler d1 create fye-calendar` and `npx wrangler r2 bucket create
+   fye-calendar-flyers`, then put the new `database_id` in `wrangler.toml`.
+2. `npx wrangler d1 execute fye-calendar --remote --file=YOUR-BACKUP.sql`.
+   **Do not run `schema.sql` first** — the backup carries its own `CREATE TABLE`
+   statements, and `schema.sql` drops every table.
+3. Put the artwork back, one object per file:
+   `for f in flyers/*; do npx wrangler r2 object put "fye-calendar-flyers/$(basename "$f")" --remote --file="$f"; done`
+4. `npx wrangler pages project create fye-calendar --production-branch
+   cloudflare-backend`, then deploy. **From the CLI, not the dashboard** — see
+   "Deploying" for why the dashboard produces something that cannot run
+   `functions/`.
+5. Redo Access: a new Zero Trust organisation, One-time PIN, the application on
+   the new `*.pages.dev` host, then its AUD and team domain into `wrangler.toml`
+   and deploy again. Until that is done the admin API refuses everything, which
+   is the intended state rather than a problem to work around.
+6. Point the hostname at the new project — the one step that needs the domain
+   registrar rather than Cloudflare.
+
+Steps 1–4 restore the calendar students read. Step 5 restores the reviewers'
+ability to approve anything.
 
 ## The seeded events are placeholders
 

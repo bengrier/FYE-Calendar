@@ -298,25 +298,51 @@ What it means concretely:
 - The address depends on a personal Hover account. Nothing in Cloudflare can
   keep the calendar reachable if that lapses.
 - If either account is lost — leaving CSU, a forgotten password, an unpaid card
-  — the calendar goes down and the office cannot bring it back. This is
-  different in kind from the GitHub risk: the repo is cloned on disk and could
-  be re-hosted in an afternoon, but the submissions and approvals only exist
-  in D1.
+  — the calendar goes down. Since 2026-08-12 it can at least be rebuilt: the
+  weekly backup carries the database *and* the uploaded artwork out of the
+  account, and README has the procedure. What nobody else has is access to the
+  running thing, so recovery means an outage and a rebuild rather than somebody
+  simply logging in.
 
-Four things that make that survivable, in order of how much they buy:
+Four things that make that survivable, in the order they were originally worth
+doing. The first has since been ruled out, which is why the rest matter more
+than they did:
 
-1. **Add a second admin to the Cloudflare account** — someone in the office,
-   under Manage Account → Members. Costs nothing, takes a minute, and is the
-   single thing most worth doing.
-2. ~~**Back up the database.**~~ **Done 2026-08-11**, and automatic:
-   `.github/workflows/backup.yml` exports it every Sunday and keeps an
-   encrypted copy for a year, outside Cloudflare on purpose. One backup was
-   also taken by hand that day. Two things still need a human — the
-   `BACKUP_PASSPHRASE` has to exist somewhere other than GitHub, and somebody
-   should restore one at some point, because a backup nobody has opened is a
-   guess. Note that the command this file used to recommend wrote `backup.sql`
-   into the repo root, which is a public repository and a file full of student
-   email addresses; `.gitignore` now catches that name.
+1. ~~**Add a second admin to the Cloudflare account.**~~ **Ruled out
+   2026-08-12.** It is not going to happen, so it has stopped being written
+   down as the thing most worth doing — a recommendation that gets re-read and
+   re-declined every time somebody picks this file up is worse than no
+   recommendation, because it makes the rest of the list look optional too.
+
+   What it was buying still has to come from somewhere, and the answer is the
+   backup, which is why the backup grew on the same day: it now carries the
+   **uploaded flyers as well as the database**, and README has a
+   [rebuild procedure](README.md#rebuilding-from-a-backup) for standing the
+   whole calendar up on a different account. Before that change a restore would
+   have produced every event with its artwork missing, because the D1 dump holds
+   a flyer's *key* and R2 holds its bytes.
+
+   Be clear about what this does and does not replace. A second admin is
+   *continuity* — somebody else can already reach the running thing. A backup is
+   *recovery* — somebody rebuilds it, with an outage in between and a domain
+   still pointing at a project they cannot administer. The second is strictly
+   worse and is now the plan, deliberately.
+2. ~~**Back up the database.**~~ **Done 2026-08-11**, automatic, and since
+   2026-08-12 it backs up the flyers too — `.github/workflows/backup.yml`,
+   weekly, encrypted, kept a year, outside Cloudflare on purpose. **This is now
+   the top item on this list rather than the second**, since the one above it
+   is not happening.
+
+   Two things still need a human. The `BACKUP_PASSPHRASE` has to exist
+   somewhere other than GitHub. And **somebody should do a restore**, which
+   matters more now than it did when this was the runner-up: the rebuild
+   procedure in README has never been rehearsed, and it is the only thing
+   standing between a lost account and a lost calendar. A backup nobody has
+   opened is a guess.
+
+   Note that the command this file used to recommend wrote `backup.sql` into
+   the repo root, which is a public repository and a file full of student email
+   addresses; `.gitignore` now catches that name.
 3. **Decide whether the address should be personal.** A CSU-owned hostname
    pointed at the same Pages project would cost nothing technically — it is one
    CNAME — and would take the domain out of the chain entirely.
@@ -1304,3 +1330,56 @@ a deploy that put the wrong calendar on the live site. Now that the workflow
 publishes from `main`, that failure mode has teeth it did not have this morning
 — which is an argument for retiring `cloudflare-backend` rather than
 maintaining two branches by hand.
+
+### 2026-08-12 — no second admin, so the backup became a rebuild kit
+
+**A second admin on the Cloudflare account was ruled out.** It had been sitting
+at the top of [the survivability list](#the-hosting-is-personal-and-that-is-now-a-decision)
+since 2026-08-08 as the single cheapest thing worth doing, and it is not going
+to happen. It is struck through rather than deleted, because "we considered
+this and declined it" and "nobody thought of this" are different states and the
+next person to read the file should be able to tell them apart.
+
+That decision has a consequence, and taking the recommendation out without
+following the consequence through would have been the wrong way to honour it.
+**The backup now carries the uploaded flyers as well as the database.**
+
+The gap it closes is one nobody had written down: **a D1 dump holds a flyer's
+key, and R2 holds its bytes.** Restoring only the database would have produced
+every event, every approval and every submitter's address, with all the
+submitted artwork gone — a restore that looks like it worked. That was tolerable
+while somebody else could in principle be given the keys to the account. With
+recovery-by-rebuild as the only plan, the backup has to be sufficient on its
+own.
+
+Three decisions in how it was done:
+
+- **The keys come out of the dump, not from walking the bucket.** So the
+  artwork in an archive is exactly the artwork the rows in that same archive
+  point at, and the two can never disagree. It also means orphaned objects are
+  not collected — the retention sweep exists to delete those, and a backup that
+  faithfully preserved rubbish would only restore it.
+- **One missing object does not fail the backup, but every missing object
+  does.** A flyer can legitimately vanish between the export and the fetch,
+  since the retention sweep runs on its own schedule, and losing a database
+  backup over one absent PNG would be a bad trade. All of them failing is not
+  that — it is a broken credential, almost certainly the token missing
+  `Workers R2 Storage → Read`, and shipping an artwork-less archive every week
+  until somebody needs one is exactly the silent failure this project keeps
+  finding. So zero-out-of-N is an error and N-1-out-of-N is a warning.
+- **The archive is a tarball now**, so the artifact is `.tar.gz.enc` rather
+  than `.sql.enc`. Anything written against the old name needs updating; the
+  restore command in README and at the top of the workflow is current.
+
+`README.md` gained [Rebuilding from a backup](README.md#rebuilding-from-a-backup):
+new D1, new bucket, the dump, the objects, a CLI-created Pages project, and a
+fresh Access application. Six steps, of which only the last needs the domain
+registrar.
+
+**None of it has been rehearsed**, and that is now the most valuable unticked
+thing in this file. It was checked in the small — a real export, its one
+referenced flyer fetched, tarred, encrypted, decrypted and extracted back to
+157 `INSERT` statements and an intact 1217×717 PNG — but a full rebuild onto a
+different account has never been done. The right time to find out what that
+procedure gets wrong is an idle afternoon on a throwaway account, not the week
+the account is gone.
