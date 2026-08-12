@@ -238,17 +238,25 @@ and converting the app to a Worker was never worth doing to obtain it. The
 workflow needs two repository secrets before it can work; see
 [the automation pass](#2026-08-11--deploys-and-backups-stopped-depending-on-one-person).
 
-**There are 23 placeholder events and *four* unflagged events on the live
-calendar** — not one, which is what this file said until 2026-08-11. Counted
-from a real export on that date:
+**There are 23 placeholder events and one unflagged event on the live
+calendar.** A real export on 2026-08-11 found *four* unflagged, not the one
+this file had claimed since deployment:
 
 | | |
 | --- | --- |
-| 23 | seeded placeholders, `temporary = 1`, announce themselves |
-| 3 | `Ben's Test Event` — the weekly-repeat deployment test, Aug 12/19/26 |
-| 1 | `Robotics Club: Line-Follower Sprint` — the seeded submission `p1`, approved |
+| 23 | seeded placeholders, `temporary = 1`, announce themselves — still there |
+| 3 | `Ben's Test Event` — the weekly-repeat deployment test. **Deleted 2026-08-11** |
+| 1 | `Robotics Club: Line-Follower Sprint` — the seeded submission `p1`, approved. Still there |
 
-The last one is the one to know about. **Approving a seeded submission produces
+The three test rows and their nine `event_tags` are gone, verified against the
+live API: 24 events served, none of them a test. The submission row
+`s-msp3xnjv-4hc1lb` was deliberately **not** deleted — nothing in this project
+deletes a submission row — so its R2 flyer is now an approved submission's
+artwork that no event points at, which is exactly the case the retention sweep
+was built to collect. It goes on the first sweep after the settling day, with
+no action needed.
+
+The remaining one is the one to know about. **Approving a seeded submission produces
 placeholder content that does not announce itself**, because approved events
 never carry the `temporary` flag — the flag lives on seeded *events*, and an
 approval writes a fresh row. `p2` (`Women in Computing Coffee Hour`) is still
