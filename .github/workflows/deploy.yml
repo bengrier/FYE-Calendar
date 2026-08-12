@@ -54,11 +54,11 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "22"
 
       # `--branch cloudflare-backend` is NOT a git operation and does not mean
       # this deploys that branch. It is a label Cloudflare matches against the
@@ -70,8 +70,13 @@ jobs:
       # wrangler reads pages_build_output_dir = "public" from wrangler.toml, so
       # only public/ is served and functions/ is compiled — no directory
       # argument, on purpose.
+      # Pinned exactly, not to `wrangler@4`. npx satisfies a range from whatever
+      # is already cached on the runner, and the first run of this workflow
+      # quietly used 4.86.0 while this project is developed against 4.121.0. A
+      # deploy tool that changes version by itself is a variable nobody wants in
+      # the one command that publishes the site. Bump it deliberately.
       - name: Deploy to Cloudflare Pages
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-        run: npx --yes wrangler@4 pages deploy --branch cloudflare-backend
+        run: npx --yes wrangler@4.121.0 pages deploy --branch cloudflare-backend
