@@ -84,8 +84,8 @@ checked out. That is the trap — the branch name in the deploy command says
 nothing about what is being deployed.
 
 **Deploying is a push to `main`** as of 2026-08-11, via GitHub Actions, and the
-database is backed up on a schedule by the same route. Both are inert until
-their repository secrets are set — see
+database is backed up weekly by the same route. Both were run against the real
+stack the day they were written and both work — see
 [the automation pass](#2026-08-11--deploys-and-backups-stopped-depending-on-one-person).
 `npx wrangler pages deploy` still works by hand and is what the workflow runs.
 
@@ -1229,8 +1229,43 @@ workflows. A tool that picks its own version is not something to have inside
 the one command that publishes the site, and this is the kind of drift that
 shows up months later as "it worked in CI yesterday."
 
-The remaining failure in both is the missing credentials, which is the only
-thing left that a person has to supply.
+#### Both then ran for real, and this is what proved it
+
+The secrets went in the same evening and both workflows were run again. Green
+checks are not the evidence; these are.
+
+**The deploy** uploaded 20 files and a Functions bundle, landed as
+**Production** on the `cloudflare-backend` label from a checkout of `main`, and
+`wrangler pages deployment list` shows it against the right commit. The
+Functions bundle is the part worth naming — it is exactly what a Worker cannot
+do, and seeing it upload is what distinguishes this from
+[the quiet failure of 2026-08-10](#the-dashboard-builds-a-worker-and-workers-do-not-run-functions).
+
+Afterwards, on the live site: `/` and `/api/events` both 200 with 24 events,
+`/review` on the Access host still 302s to the login, and `/api/admin/queue`
+unauthenticated still 401s. A deploy that silently removed the edge challenge
+or opened the admin API would otherwise look exactly like a successful one.
+
+**The backup** exported 157 `INSERT` statements, encrypted, and decrypted back
+to 157 inside the same job. The number is its own cross-check: the by-hand dump
+taken hours earlier held 169, and the difference is precisely the 3 events and
+9 `event_tags` deleted in between.
+
+The artifact was then downloaded and inspected **without the passphrase**,
+which is the check that matters for a public repository — zero hits for
+`colostate`, `INSERT INTO`, `CREATE TABLE` or anything email-shaped, an OpenSSL
+`Salted__` header, and 7.992 bits/byte of entropy across all 256 byte values.
+It is ciphertext, not a file that merely has `.enc` on the end.
+
+The one thing still unproven is a restore from the artifact, because that needs
+the passphrase and the passphrase is deliberately not something this account
+handles. The job proving its own output decrypts is the substitute, and it is a
+good one — but somebody should still do a real restore once.
+
+**Token permissions, since a template was nearly recommended by mistake:** a
+custom token with `Account → Cloudflare Pages → Edit` and `Account → D1 →
+Edit`, and nothing else. D1 needs Edit rather than Read because an export is a
+write as far as the API is concerned.
 
 #### What the export turned up about the live data
 
