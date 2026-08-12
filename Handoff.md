@@ -1200,6 +1200,30 @@ the backup. **They fail loudly rather than silently while those are missing**,
 which is the right way round: a deploy that appears to succeed and publishes
 nothing is how you come to believe the live site has a change it does not have.
 
+#### What was checked, and what it turned up
+
+Not by reading. Both workflows were run on GitHub, and the backup's shell was
+run end to end locally against the real export first: 169 `INSERT` statements
+in, encrypted, decrypted byte-identically, plaintext removed, only the
+ciphertext left to upload. A wrong passphrase fails with `bad decrypt` rather
+than producing plausible rubbish.
+
+On GitHub, with no secrets set, the deploy failed at `Not logged in.` and
+published nothing, and the backup failed at its first step naming
+`BACKUP_PASSPHRASE` — before the export rather than after it, which is the
+whole point of that guard existing.
+
+**The first run also caught something worth keeping.** `npx --yes wrangler@4`
+resolved to **4.86.0** on the runner, while this project is developed against
+4.121.0 — npx satisfies a version range from whatever is already cached on the
+machine rather than fetching the newest. It is now pinned exactly in both
+workflows. A tool that picks its own version is not something to have inside
+the one command that publishes the site, and this is the kind of drift that
+shows up months later as "it worked in CI yesterday."
+
+The remaining failure in both is the missing credentials, which is the only
+thing left that a person has to supply.
+
 #### What the export turned up about the live data
 
 The backup was taken first, partly to have one and partly because a real export
