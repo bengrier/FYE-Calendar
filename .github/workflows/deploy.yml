@@ -15,10 +15,17 @@
 # Two secrets, both set in Settings → Secrets and variables → Actions:
 #
 #   CLOUDFLARE_API_TOKEN   — a scoped token, NOT a global API key. Create it at
-#                            My Profile → API Tokens with the "Edit Cloudflare
-#                            Workers" template, which carries the Pages write
-#                            permission this needs.
-#   CLOUDFLARE_ACCOUNT_ID  — Workers & Pages → Overview, right-hand column.
+#                            My Profile → API Tokens → Create Custom Token with
+#                            exactly two permissions:
+#                              Account → Cloudflare Pages → Edit   (this deploy)
+#                              Account → D1 → Edit                 (the backup)
+#                            One token serves both workflows. A template is not
+#                            used deliberately: the templates grant a good deal
+#                            more than these two, and this token lives in a
+#                            public repository's settings.
+#   CLOUDFLARE_ACCOUNT_ID  — 19afe22934d229971259f29ef3f7700f. Not a secret (it
+#                            is in every dashboard URL), but it is stored as one
+#                            so both values live in the same place.
 #
 # Until both exist this workflow fails on every push, loudly, which is the right
 # way round: a deploy that silently does nothing is how you end up believing the

@@ -28,11 +28,11 @@
 #
 # Three secrets, in Settings → Secrets and variables → Actions:
 #
-#   CLOUDFLARE_API_TOKEN   — the same token the deploy workflow uses. The
-#                            "Edit Cloudflare Workers" template includes D1
-#                            write, which `d1 export` needs (it writes a
-#                            temporary object to R2 and hands back a link).
-#   CLOUDFLARE_ACCOUNT_ID  — Workers & Pages → Overview, right-hand column.
+#   CLOUDFLARE_API_TOKEN   — the same token the deploy workflow uses. `d1 export`
+#                            needs Account → D1 → **Edit**, not Read: the export
+#                            is a write as far as the API is concerned, since it
+#                            builds a temporary object and hands back a link.
+#   CLOUDFLARE_ACCOUNT_ID  — 19afe22934d229971259f29ef3f7700f.
 #   BACKUP_PASSPHRASE      — invent a long random one and put it in the office's
 #                            password manager, NOT only in GitHub. A backup you
 #                            cannot decrypt is not a backup, and GitHub will not
