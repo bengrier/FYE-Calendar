@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Browser-tab icon: a calendar page in the CSU signature green (#1f4d2b) and
+  gold (#c8c372), with one date marked in the app's teal accent (#0088b0).
+
+  Drawn from rectangles only, no text: a glyph has to survive being scaled to
+  16px, and letterforms do not. The same file is the source for favicon.ico and
+  apple-touch-icon.png — see the commands in README before editing, because
+  those two are rasters and do not follow a change made here.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+  <rect width="32" height="32" rx="6" fill="#1f4d2b"/>
+
+  <!-- binding rings, above the calendar's top edge -->
+  <rect x="10" y="4.5" width="2.6" height="5.5" rx="1.3" fill="#c8c372"/>
+  <rect x="19.4" y="4.5" width="2.6" height="5.5" rx="1.3" fill="#c8c372"/>
+
+  <!-- the page, with the gold header band across the top -->
+  <rect x="5.5" y="7" width="21" height="19.5" rx="2.5" fill="#ffffff"/>
+  <rect x="5.5" y="7" width="21" height="5" rx="2.5" fill="#c8c372"/>
+  <rect x="5.5" y="10" width="21" height="2" fill="#c8c372"/>
+
+  <!--
+    Four dates, not the six a real month grid would want: at 16px a 3x3 of
+    blocks averages into one gray smear, while four cells still resolve as
+    separate squares. The marked one is the accent used across the app.
+  -->
+  <rect x="8.4" y="15" width="7" height="4.4" rx="0.9" fill="#1f4d2b"/>
+  <rect x="16.6" y="15" width="7" height="4.4" rx="0.9" fill="#0088b0"/>
+  <rect x="8.4" y="20.6" width="7" height="4.4" rx="0.9" fill="#1f4d2b"/>
+  <rect x="16.6" y="20.6" width="7" height="4.4" rx="0.9" fill="#1f4d2b"/>
+</svg>

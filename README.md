@@ -99,6 +99,8 @@ split is the point of the directory: with the repo root as the output,
 - `public/css/app.css` — Broadsheet tokens, CSU header, calendar components.
 - `public/flyers/` — artwork committed to the repo. Uploaded flyers are not here;
   they live in R2 and are served from `/uploads`.
+- `public/favicon.svg` — the tab icon, and the source for the two rasters beside
+  it. See [The tab icon](#the-tab-icon).
 - `functions/api/` — the API. `functions/api/admin/` is behind Cloudflare Access.
 - `functions/_lib/` — shared server code. A leading underscore means the
   directory is not routed, so nothing in it is reachable as a URL.
@@ -523,6 +525,36 @@ dashboard — see step 7 of "Deploying" for why that distinction matters:
 The exported `.ics` writes times against an `America/Denver` VTIMEZONE. If this
 is ever reused off the Front Range, `TZID` in `public/js/ics.js` is the one thing
 to change.
+
+## The tab icon
+
+`public/favicon.svg` is the drawing: a calendar page in the CSU signature green
+and gold, with one date in the app's teal accent. Beside it sit two rasters
+generated from it, `favicon.ico` (48, 32 and 16px) and `apple-touch-icon.png`
+(180px, for an iOS home screen). All three are linked from the `<head>` of
+`public/index.html`, and Pages serves them from the site root.
+
+The rasters do not follow a change to the SVG. After editing it, rebuild them —
+this needs ImageMagick (`brew install imagemagick`):
+
+```
+cd public
+magick -background none favicon.svg -define icon:auto-resize=48,32,16 favicon.ico
+magick -background "#1f4d2b" favicon.svg -resize 180x180 -alpha remove -alpha off -strip -depth 8 apple-touch-icon.png
+```
+
+The touch icon is flattened onto the green rather than kept transparent because
+iOS masks its own rounded corners onto the square, and transparent corners come
+out black underneath that mask.
+
+Whatever replaces this drawing has to survive 16px. That is why it is four date
+blocks and not a real month grid, and why there is no lettering: at tab size a
+3x3 of blocks averages into a gray smear, and a letterform into a blot. Check a
+change at 16px before keeping it, rather than at the size you drew it:
+
+```
+magick "public/favicon.ico[2]" -scale 320x320 /tmp/favicon-16.png
+```
 
 ## Notes on rendering
 
