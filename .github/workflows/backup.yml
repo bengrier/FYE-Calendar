@@ -280,10 +280,27 @@ jobs:
           # those two in the artifacts list.
           name: ${{ env.ARTIFACT_NAME }}
           path: "*.tar.gz.enc"
-          # A year of weekly backups. The default is 90 days, which is shorter
-          # than the gap between someone breaking something and someone
-          # noticing over a summer.
-          retention-days: 365
+          # 90 days — about thirteen weekly backups.
+          #
+          # This asked for 365 until 2026-08-17 and never once got it. GitHub
+          # capped every upload at 90 and said so in a warning nobody was
+          # reading, so the number here was aspiration and the artifacts had
+          # been expiring at 90 days all along. Asking again would only bring
+          # the warning back, so it now says what actually happens.
+          #
+          # The ceiling follows the repository being PUBLIC rather than the
+          # plan: public repositories cap at 90 days, private ones allow up to
+          # 400. If this repo is ever made private — see the note above about
+          # the encryption staying either way — this can go up with it.
+          #
+          # What 90 days does and does not cover, since the original number was
+          # chosen against a real worry: a rebuild reads the newest archive
+          # only, so disaster recovery is untouched by this. What shortens is
+          # how far back you can rewind after damage nobody noticed — and a
+          # summer is about 90 days, which is the gap that motivated 365. See
+          # README's "How far back you can go" for the ways to cover it, none
+          # of which is this field.
+          retention-days: 90
           if-no-files-found: error
 
       # Last, so that the archive above is safely uploaded before the run is

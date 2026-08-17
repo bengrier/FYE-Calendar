@@ -329,7 +329,7 @@ than they did:
    worse and is now the plan, deliberately.
 2. ~~**Back up the database.**~~ **Done 2026-08-11**, automatic, and since
    2026-08-12 it backs up the flyers too — `.github/workflows/backup.yml`,
-   weekly, encrypted, kept a year, outside Cloudflare on purpose. **This is now
+   weekly, encrypted, kept 90 days, outside Cloudflare on purpose. **This is now
    the top item on this list rather than the second**, since the one above it
    is not happening.
 

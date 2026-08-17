@@ -312,7 +312,7 @@ R2. The repo is cloned on several disks and could be re-hosted in an afternoon.
 Neither of those could.
 
 [`.github/workflows/backup.yml`](.github/workflows/backup.yml) takes both every
-Sunday and uploads them as one encrypted artifact, kept a year. It can also be
+Sunday and uploads them as one encrypted artifact, kept 90 days. It can also be
 run on demand from the Actions tab. The schedule lives in GitHub rather than
 Cloudflare for two reasons: Pages Functions have no scheduled handler, and a
 backup stored in the account it insures against losing is not a backup.
@@ -358,6 +358,48 @@ The one thing the workflow cannot do for itself: **the passphrase must exist
 somewhere other than GitHub.** Put `BACKUP_PASSPHRASE` in the office's password
 manager. GitHub will not show it to you again, and a backup nobody can decrypt
 is not a backup.
+
+### How far back you can go
+
+Ninety days, about thirteen weekly archives. The workflow asked for 365 for
+months and never got it — GitHub caps artifacts on a **public** repository at 90
+days and had been silently downgrading every upload, with a warning in the run
+log nobody read. The ceiling follows the repository being public rather than the
+plan; private repositories allow up to 400 days.
+
+This does not affect the thing the backup exists for. A rebuild reads the newest
+archive and nothing else, so recovering from a lost Cloudflare account is
+untouched by how long the older ones last. What ninety days limits is **how far
+back you can rewind after damage nobody noticed** — a bad edit, a deletion, a
+restore that went sideways. Past that, every surviving archive already contains
+it. A summer break is about ninety days, so the margin there is thin.
+
+Worth knowing that it compounds with `EVENT_RETENTION_MONTHS`, which is `3`.
+Past events leave the database after three months, and the last archive holding
+one expires ninety days later, so **an event is gone everywhere about six months
+after it happens** — with its flyer. That is the retention policy working as
+written, not a backup fault, but there is no archival copy behind it. If anyone
+ever wants to know what the office ran two years ago, nothing here will answer.
+Submissions are exempt: nothing deletes those rows, so every decision the office
+made is in the newest archive however old it is.
+
+Three ways to cover the gap, if it matters:
+
+- **Download one archive a term** and put it on a CSU share. It is 74 KB. Three
+  downloads a year and retention stops being a constraint at all.
+- **Turn off `EVENT_RETENTION_MONTHS`** in `wrangler.toml` to keep the history in
+  the database, where the backup will keep finding it. The cost is real: flyers
+  for past events then stay in R2 permanently, which is one of the three things
+  the retention sweep was written to collect. At roughly 72 KB a flyer against
+  R2's 10 GB free tier, that is a long way from costing anything.
+- **Make the repository private**, which raises the ceiling toward 400 days and
+  also retires the reason artifacts have to be encrypted in the first place —
+  though the encryption stays regardless, since repositories get flipped back.
+
+Not a fourth way: attaching archives to a **GitHub release**. Release assets
+never expire, which makes it a tempting trick for exactly this, and on a public
+repository it would publish every submitter's name and address as ciphertext,
+permanently and irrevocably, on the strength of one passphrase holding forever.
 
 ### Rebuilding from a backup
 
