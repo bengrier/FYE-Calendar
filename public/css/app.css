@@ -1205,6 +1205,17 @@ textarea.input { font-size: 17px; line-height: 1.5; resize: vertical; }
   gap: 10px;
 }
 .dropzone > span { font-size: 17px; }
+/* A requirement rather than an error, so it is set in ink and not in the
+   magenta kept for "this field needs fixing" — indented off the surrounding
+   copy only so it is not read as more of the same advice. */
+.dropzone__rule {
+  border-left: 3px solid var(--ink-20);
+  background: var(--ink-03);
+  padding: 12px 16px;
+  color: var(--ink-70);
+  line-height: 1.5;
+}
+.dropzone__rule strong { color: var(--color-text); }
 .dropzone input[type="file"] { font-family: inherit; font-size: 15px; }
 .dropzone__status {
   display: flex;
@@ -1395,6 +1406,17 @@ textarea.input { font-size: 17px; line-height: 1.5; resize: vertical; }
 .meta__value { font-size: 18px; margin-top: 8px; }
 .meta__sub { font-size: 16px; color: var(--ink-65); margin-top: 2px; }
 .meta__none { font-size: 17px; color: var(--ink-55); line-height: 1.5; }
+/* Sits under the flyer proof, so it is read while the artwork is still on
+   screen. Ink rather than magenta: it is something to look at, not something
+   already wrong. */
+.meta__check {
+  font-size: 15px;
+  color: var(--ink-70);
+  line-height: 1.5;
+  margin-top: 10px;
+  padding-left: 12px;
+  border-left: 3px solid var(--ink-20);
+}
 
 .flyerproof { border: 1px solid rgba(32, 30, 29, 0.18); background: #fff; padding: 14px; }
 .flyerproof__sheet {

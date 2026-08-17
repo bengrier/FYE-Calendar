@@ -1449,6 +1449,13 @@
       el("span", { class: "field__label", text: "Flyer page" }),
       el("span", { class: "dropzone" }, [
         el("span", { text: "One page, PDF or image, up to 10 MB. This is what students and the projector actually see, so make it readable from the back of a room. Events without one still get listed, as a text card." }),
+        /* Said here rather than in the sidenote because it is a rule about
+           what is printed on the page itself, and this is the moment someone
+           is looking at the page they are about to attach. */
+        el("span", { class: "dropzone__rule" }, [
+          el("strong", { text: "Contact info has to be your organization's general email address, not a personal one." }),
+          " A flyer that lists a personal address is declined — the address on it has to still reach the club after whoever made the flyer has graduated."
+        ]),
         input,
         status
       ])
@@ -2068,7 +2075,17 @@
               : el("div", {
                   class: "meta__none",
                   text: "No flyer attached. The event will show as a text listing."
+                }),
+            /* The one thing on the page nothing can check for the reviewer:
+               submitters are told the rule on the form, but only someone
+               reading the artwork can see whether it was followed. Shown
+               only when there is artwork to read. */
+            sub.flyer
+              ? el("div", {
+                  class: "meta__check",
+                  text: "Check the contact address on the page. A personal email instead of the organization's general address is grounds to decline."
                 })
+              : null
           ]),
           el("div", {}, [
             el("div", { class: "meta__label", text: "Submitted by" }),
