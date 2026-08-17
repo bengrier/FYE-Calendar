@@ -325,6 +325,17 @@ archive is internally consistent: exactly the artwork the rows in that same
 archive reference. Seeded flyers are not included and do not need to be, since
 `public/flyers/` is in the repo.
 
+**A failed backup run does not mean there is no backup.** The database and the
+artwork fail independently — the flyers live in R2 and need a token permission
+the export does not — so if the artwork cannot be fetched, the dump is still
+encrypted and uploaded, and the run is failed afterwards rather than instead.
+That archive is named **`fye-calendar-backup-DATABASE-ONLY`** instead of
+`fye-calendar-backup`, and it is not a rebuild kit: it restores every event and
+submission with the uploaded artwork missing. When the newest artifact carries
+that name, read the failed run's log — the fetch step prints what wrangler
+actually said — and check the token still has Workers R2 Storage → Read. For an
+actual rebuild, take the newest artifact named plain `fye-calendar-backup`.
+
 To take one by hand:
 
 ```bash

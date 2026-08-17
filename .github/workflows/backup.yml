@@ -30,6 +30,14 @@
 # are committed files in public/flyers/, so the repo already holds them. Only
 # `f-` keys are R2 objects.
 #
+# If the artwork cannot be fetched, the database is still exported, encrypted
+# and uploaded — under the name `fye-calendar-backup-DATABASE-ONLY` rather than
+# `fye-calendar-backup` — and the run is failed afterwards. So a red run here
+# does not mean there is no backup, and an artifact named DATABASE-ONLY is not
+# a rebuild kit: it will restore every event and submission with the uploaded
+# artwork missing. Take the newest artifact named plain `fye-calendar-backup`
+# for that.
+#
 # ── The archive is encrypted, and that is not decoration ─────────────────────
 #
 # This repository is PUBLIC, and the dump contains every submitter's name and
@@ -154,6 +162,12 @@ jobs:
           FILE="fye-calendar-$(date -u +%Y-%m-%d).sql"
           mkdir -p flyers
 
+          # The name the artifact is uploaded under, decided at the two points
+          # below where this step can end. A database-only archive is given a
+          # different name so it can never be mistaken for a whole one by
+          # somebody grabbing the newest download.
+          ARTIFACT="fye-calendar-backup"
+
           # `f-<base36 time>-<6 base36>.<ext>`, the format functions/_lib/http.js
           # uid() produces and functions/api/flyers.js appends a sniffed
           # extension to. Anchored on that shape so a stray word in a blurb can
@@ -161,8 +175,11 @@ jobs:
           KEYS=$(grep -oE "f-[0-9a-z]+-[0-9a-z]+\.(pdf|jpg|png|gif|webp)" "$FILE" | sort -u)
 
           if [ -z "$KEYS" ]; then
+            # Complete by definition: no rows point at any R2 object, so an
+            # archive with an empty flyers/ directory is the whole calendar.
             echo "No uploaded flyers are referenced. Nothing to fetch."
             echo "FLYER_COUNT=0" >> "$GITHUB_ENV"
+            echo "ARTIFACT_NAME=$ARTIFACT" >> "$GITHUB_ENV"
             exit 0
           fi
 
@@ -170,27 +187,54 @@ jobs:
           for KEY in $KEYS; do
             TOTAL=$((TOTAL + 1))
             if npx --yes wrangler@4.121.0 r2 object get "fye-calendar-flyers/$KEY" \
-                 --remote --file="flyers/$KEY" >/dev/null 2>&1; then
+                 --remote --file="flyers/$KEY" >/tmp/r2.log 2>&1; then
               OK=$((OK + 1))
             else
               # One missing object must not cost the database backup. The
               # retention sweep can legitimately delete a flyer between the
               # export and this step, and a row can outlive its artwork.
               echo "::warning::Could not fetch $KEY — continuing without it."
+
+              # Print what wrangler actually said. This used to go to
+              # /dev/null, which meant the one run that needed diagnosing was
+              # the one run with nothing to diagnose from: a missing object, an
+              # expired token and a bad gateway all looked identical, and the
+              # error message below had to guess between them. GitHub masks the
+              # secrets in this output, and the account id is already in this
+              # file, so there is nothing here to leak on a public repo.
+              echo "--- wrangler said, fetching $KEY ---"
+              cat /tmp/r2.log
+              echo "--- end ---"
             fi
           done
 
           echo "Flyers: $OK of $TOTAL fetched."
           echo "FLYER_COUNT=$OK" >> "$GITHUB_ENV"
 
-          # But *every* fetch failing is not a missing object, it is a broken
-          # credential — almost certainly the token lacking
-          # Workers R2 Storage → Read. Silently shipping an artwork-less archive
-          # every week until somebody needs one is the failure worth preventing.
+          # Every fetch failing is usually not a missing object, it is a broken
+          # credential — most often the token lacking Workers R2 Storage → Read.
+          # Silently shipping an artwork-less archive every week until somebody
+          # needs one is the failure worth preventing, so the run still goes
+          # red. But it goes red at the *end* now, after the upload.
+          #
+          # It failed here instead on 2026-08-16, and took a perfectly good
+          # export down with it: 157 INSERT statements dumped, verified,
+          # and then dropped on the floor because one PNG would not come back.
+          # The flyer and the database fail independently and there is no
+          # reason the second should be hostage to the first. Whatever is
+          # wrong, a week-old dump is worse than a fresh one missing artwork.
+          #
+          # Note this test cannot tell "the credential is broken" from "the one
+          # flyer we have was unlucky" while the calendar has a single upload in
+          # it — 0 of 1 is both. That is the other reason not to spend the
+          # database backup on it.
           if [ "$OK" -eq 0 ]; then
-            echo "::error::Every flyer fetch failed. Check the API token has Account → Workers R2 Storage → Read."
-            exit 1
+            echo "::warning::Every flyer fetch failed. Uploading the database on its own; this run will be failed at the end."
+            echo "FLYERS_MISSING=1" >> "$GITHUB_ENV"
+            ARTIFACT="fye-calendar-backup-DATABASE-ONLY"
           fi
+
+          echo "ARTIFACT_NAME=$ARTIFACT" >> "$GITHUB_ENV"
 
       - name: Bundle and encrypt
         env:
@@ -229,10 +273,24 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: fye-calendar-backup
+          # `fye-calendar-backup`, or `fye-calendar-backup-DATABASE-ONLY` when
+          # the flyers could not be fetched. Set in the fetch step. A partial
+          # archive is worth keeping and worth never being handed to somebody
+          # who asked for the latest backup, and the name is what separates
+          # those two in the artifacts list.
+          name: ${{ env.ARTIFACT_NAME }}
           path: "*.tar.gz.enc"
           # A year of weekly backups. The default is 90 days, which is shorter
           # than the gap between someone breaking something and someone
           # noticing over a summer.
           retention-days: 365
           if-no-files-found: error
+
+      # Last, so that the archive above is safely uploaded before the run is
+      # failed. Everything this step could have said was already said as a
+      # warning; it exists to turn the run red and send the email.
+      - name: Fail the run if the flyers are missing
+        if: env.FLYERS_MISSING == '1'
+        run: |
+          echo "::error::Backup uploaded as fye-calendar-backup-DATABASE-ONLY — it holds the database but none of the flyer artwork. The wrangler output is in the fetch step above; check first whether the API token still has Account → Workers R2 Storage → Read. Until this passes again, the newest *complete* backup is an older one."
+          exit 1
