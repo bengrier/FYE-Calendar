@@ -1418,7 +1418,10 @@ textarea.input { font-size: 17px; line-height: 1.5; resize: vertical; }
   border-left: 3px solid var(--ink-20);
 }
 
-.flyerproof { border: 1px solid rgba(32, 30, 29, 0.18); background: #fff; padding: 14px; }
+/* Block because it wraps the artwork and its caption: left inline, the border
+   and white ground paint around the line boxes instead of the card, which put
+   the caption outside the frame and a stray white tab beside it. */
+.flyerproof { display: block; border: 1px solid rgba(32, 30, 29, 0.18); background: #fff; padding: 14px; }
 .flyerproof__sheet {
   aspect-ratio: 8.5 / 11;
   background: repeating-linear-gradient(135deg, rgba(32, 30, 29, 0.05) 0 7px, transparent 7px 14px);
