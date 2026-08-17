@@ -23,6 +23,12 @@
    by definition not in it — so it walks the bucket instead. See
    `sweepOrphanUploads`.
 
+   And a third, which is not about cost at all: **erasing the submitter's name
+   and address from submissions that have been decided.** `approve.js` and
+   `decline.js` each do that in the statement that decides the row, so this
+   normally finds nothing. It is here as the backstop, and it is the one job in
+   this file that runs first — see `sweepIdentities`.
+
    Three properties everything below is written to have, because a job that
    runs unattended on somebody else's request is a job nobody is watching:
 
@@ -119,12 +125,13 @@ export async function maybeSweep(env) {
 /* The sweep itself, with no scheduling opinion — separated so it can be called
    directly from a one-off script or a test without waiting out an interval.
 
-   `EVENT_RETENTION_MONTHS` turns off exactly one of the three things below —
+   `EVENT_RETENTION_MONTHS` turns off exactly one of the four things below —
    deleting events for age. It says the calendar keeps its history; it does not
-   say the bucket should keep files that were never part of that history. A
+   say the bucket should keep files that were never part of that history, and it
+   very much does not say the database should keep a student's address. A
    declined submission's artwork was never on the calendar and an unclaimed
    upload never even reached the queue, so neither is a retention policy anybody
-   would want to opt out of, and both are collected regardless.
+   would want to opt out of, and all three are done regardless.
 
    The flyer pass runs after the events either way. With retention off it simply
    finds less — an approved submission still has its events, so only the
@@ -136,6 +143,11 @@ export async function sweep(env, now) {
   var db = env.DB;
   var cutoff = months ? monthsBefore(isoDay(now), months) : null;
   var events = 0;
+
+  /* First, and before anything that can throw. Everything else in this file
+     frees storage, and a sweep that dies before finishing costs a few cents;
+     this one is holding personal data that should already be gone. */
+  var identities = await sweepIdentities(db);
 
   if (months) {
     /* Events first: text dates in ISO order compare correctly, which is the
@@ -157,21 +169,62 @@ export async function sweep(env, now) {
 
   var summary = {
     cutoff: cutoff,
+    identities: identities,
     events: events,
     flyers: flyers,
     orphans: orphans
   };
 
-  if (summary.events || summary.flyers || summary.orphans) {
+  if (summary.events || summary.flyers || summary.orphans || summary.identities) {
     console.log(
       "retention: removed " + summary.events + " event(s) before " +
       (cutoff || "never") + ", " + summary.flyers +
-      " flyer(s) with nothing left to be on, and " +
-      summary.orphans + " unclaimed upload(s)"
+      " flyer(s) with nothing left to be on, " +
+      summary.orphans + " unclaimed upload(s), and erased the contact details " +
+      "left on " + summary.identities + " decided submission(s)"
     );
   }
 
   return summary;
+}
+
+/* The submitter's name and address on a submission that has been decided.
+
+   These exist for one purpose: so the office can reach a person about a
+   submission it has not decided yet. Once it is approved or declined that
+   purpose is spent, and what is left is a student's name and real
+   `@colostate.edu` address sitting in a database on infrastructure the
+   university does not own, in every backup taken from then on, read by nothing.
+   `queue.js` selects `WHERE status = 'pending'`, so from the moment of the
+   decision no surface in this application ever displays them again.
+
+   **This is a backstop, not the mechanism.** `approve.js` and `decline.js` each
+   erase these columns in the same statement that sets the status, so on a
+   healthy deployment this finds nothing, every time. It is here for two cases
+   the decision path cannot cover: rows decided before that behaviour shipped,
+   and any future path that learns to decide a submission and forgets to erase.
+   Personal data outliving its purpose because one write did not happen is
+   exactly the failure that should not need anybody to notice it.
+
+   Unlike everything else in this file there is no settling period. The grace
+   elsewhere protects a reviewer who wants a *file* back; nothing here can be
+   restored by waiting, and the address is the one thing there is no argument
+   for keeping an hour longer than the decision.
+
+   Cleared to '' rather than NULL because both columns are NOT NULL and
+   `schema.sql` drops every table, so it can never be run against the live
+   database to relax that. The empty string is unambiguous anyway: the validator
+   refuses a blank name or address, so every row that still has a submitter has
+   something in both. */
+async function sweepIdentities(db) {
+  var erased = await db
+    .prepare(
+      "UPDATE submissions SET by_name = '', by_email = '' " +
+      "WHERE status IN ('approved', 'declined') AND (by_name <> '' OR by_email <> '')"
+    )
+    .run();
+
+  return erased.meta.changes;
 }
 
 /* Artwork with no event left to appear on.

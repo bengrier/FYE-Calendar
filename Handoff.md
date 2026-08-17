@@ -1383,3 +1383,95 @@ referenced flyer fetched, tarred, encrypted, decrypted and extracted back to
 different account has never been done. The right time to find out what that
 procedure gets wrong is an idle afternoon on a throwaway account, not the week
 the account is gone.
+
+### 2026-08-16 — a decided submission no longer says who sent it
+
+`by_name` and `by_email` are erased the moment a submission is approved or
+declined. Nothing else about the row changes: what was proposed, when, which
+reviewer decided it and the flyer all stay exactly as they were.
+
+**Why, since nothing was broken.** A FERPA review of the project asked what
+happens to a student's name and address after their event goes up, and the
+answer was "nothing, ever." No path in the codebase deleted a submission row or
+any column of one — `retention.js` said so in as many words — so every address
+that had ever been submitted was still in D1, and in every backup taken since.
+It was also unreachable: `queue.js` selects `WHERE status = 'pending'`, so from
+the instant of the decision no surface in the application displayed those
+columns again. Personal data that nothing reads and nothing removes is the worst
+of the three states it could be in, because there is no moment at which anybody
+is reminded it exists.
+
+**It is done in the deciding statement, not after it.** `approve.js` and
+`decline.js` already claimed the row with a conditional `UPDATE` so the database
+settles a race between two reviewers; the erasure is two more columns in that
+same statement. So there is no window where a submission is decided and the
+address is still on it, and no second write that can fail on its own. Nothing
+downstream had to be reordered around it — approve's `SELECT` asks for the
+event's fields, never the submitter's.
+
+**Cleared to `''` rather than `NULL`**, because both columns are `NOT NULL` and
+`schema.sql` drops every table, so it can never be re-run against the live
+database to relax that. Nothing is lost by it: the validator refuses a blank
+name or address, so a non-empty value means a live submitter and an empty one
+means erased, with no third case.
+
+**The sweep does it too, and that is the point.** `sweepIdentities` in
+`retention.js` nulls the contact details on any decided row that still has them.
+On a healthy deployment it finds nothing, every run. It exists for the rows
+decided before this shipped, and for the future path that learns to decide a
+submission and forgets to erase — the one kind of bug where nobody would ever
+notice the data was still there. It runs *first* in `sweep()`, before anything
+that can throw: the rest of that file frees storage and a failed run costs
+cents, while this one is holding personal data that should already be gone. It
+has no settling period either. The day of grace elsewhere protects a reviewer
+who wants a *file* back; waiting cannot restore an address, and there is no
+argument for keeping one an hour past the decision.
+
+**The reviewer's confirmation message now prints the address in full** —
+"Tell Priya Raman at praman@rams.colostate.edu yourself" — because it is now the
+last place it appears. The message is built from the client's in-memory copy of
+the submission, captured before the request, so it still reads correctly against
+a row the server has already erased. *Request changes* is unaffected and remains
+the way to write to somebody without spending the address: it keeps the
+submission pending.
+
+#### Checked against a local D1, not read
+
+A decline on its own erased the row while a legacy decided row nearby kept its
+details — which is what proves the decline statement did it rather than a sweep,
+since `decline.js` does not start one. Then a public submission triggered a
+sweep and that legacy row was erased too, logging `erased the contact details
+left on 1 decided submission(s)`, while both pending submissions kept their
+name and address throughout. Then the same approval through the review screen in
+a browser: the confirmation printed the name and the address, and the row behind
+it was already `by_name=''`, `by_email=''`. The published event kept its title,
+org, place and date.
+
+#### Before deploying, and one command after
+
+The live database holds decided submissions from before this existed. The next
+sweep will erase them on its own, but a sweep needs a write to ride on and runs
+at most twice a day, so it is worth doing deliberately and being able to say it
+is done:
+
+```bash
+npx wrangler d1 execute fye-calendar --remote --command="UPDATE submissions SET by_name = '', by_email = '' WHERE status IN ('approved','declined') AND (by_name <> '' OR by_email <> '');"
+```
+
+Count them first with the same `WHERE` and a `SELECT COUNT(*)` if you want to
+know what the backlog was.
+
+**Backups taken before this change still contain the old addresses.** The
+artifacts are encrypted and expire after 90 days, so the backlog ages out on its
+own by roughly 2026-11-14; nothing here reaches back into them, and nothing can.
+
+#### What this does not fix
+
+The four bigger items from the same review are untouched, and none of them is a
+code change: student records still sit on a personal Cloudflare account with no
+CSU agreement behind it, the backup artifacts still land on a public repository
+behind one passphrase, `DEV_UNSAFE_NO_AUTH` is still a single dashboard variable
+away from serving the queue to everybody, and uploaded flyers still carry
+whatever PDF and EXIF metadata the submitter's software put in them. This change
+shrinks the amount of personal data in the system to the current queue. It does
+not change where that queue lives.

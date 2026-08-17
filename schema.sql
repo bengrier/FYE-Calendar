@@ -46,6 +46,12 @@ CREATE TABLE submissions (
   blurb        TEXT NOT NULL,
   repeat_rule  TEXT NOT NULL DEFAULT '',
   repeat_until TEXT,
+  -- Who to reply to while the submission is still in the queue, and nothing
+  -- else. Both are erased to '' by the statement that approves or declines the
+  -- row -- see functions/api/admin/approve.js -- so a decided submission keeps
+  -- what was proposed and who decided it, and no longer says who sent it.
+  -- NOT NULL is kept because '' is a perfectly good "erased": the validator
+  -- refuses a blank one, so anything non-empty is a live submitter.
   by_name      TEXT NOT NULL,
   by_email     TEXT NOT NULL,
   flyer_key    TEXT,

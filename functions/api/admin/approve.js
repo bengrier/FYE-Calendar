@@ -28,10 +28,23 @@ export async function onRequest(context) {
   var now = Date.now();
   var identity = context.data.identity || "unknown";
 
-  /* Claim it first. If this updates nothing, somebody else got there. */
+  /* Claim it first. If this updates nothing, somebody else got there.
+
+     The submitter's name and address are erased in this same statement, not in
+     one after it. They exist so the office can reach a person about a
+     submission it has not decided yet; the moment it is decided that reason is
+     spent, and a second statement would leave a window — however short — where
+     the submission is published and the student's address is still sitting in
+     the row. Nothing below reads either column, so there is nothing to reorder
+     around: the SELECT that builds the events asks for the event's own fields.
+
+     Erased to '' rather than NULL because both columns are NOT NULL and
+     `schema.sql` drops every table, so it can never be re-run against the live
+     database to relax that. */
   var claim = await db
     .prepare(
-      "UPDATE submissions SET status = 'approved', decided_at = ?, decided_by = ? " +
+      "UPDATE submissions SET status = 'approved', decided_at = ?, decided_by = ?, " +
+      "by_name = '', by_email = '' " +
       "WHERE id = ? AND status = 'pending'"
     )
     .bind(now, identity, id)

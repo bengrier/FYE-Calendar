@@ -40,8 +40,12 @@
 #
 # ── The archive is encrypted, and that is not decoration ─────────────────────
 #
-# This repository is PUBLIC, and the dump contains every submitter's name and
-# real @colostate.edu address. Two consequences, both load-bearing:
+# This repository is PUBLIC, and the dump contains the name and real
+# @colostate.edu address of every submitter whose event is *still in the queue*
+# when the export runs. Deciding a submission erases both, so an archive holds
+# only the pending ones rather than every student who has ever submitted — but
+# "fewer addresses" is not "no addresses", and a Sunday export lands wherever
+# the queue happens to be. Two consequences, both load-bearing:
 #
 #   1. Nothing is committed. Everything is written to the runner and uploaded as
 #      an artifact; no step here writes into the working tree.
@@ -127,7 +131,7 @@ jobs:
         # the missing secret. Fail first and name the secret.
         run: |
           if [ -z "$BACKUP_PASSPHRASE" ]; then
-            echo "::error::BACKUP_PASSPHRASE is not set. The backup holds real student email addresses and is not uploaded unencrypted."
+            echo "::error::BACKUP_PASSPHRASE is not set. The backup can hold real student email addresses and is not uploaded unencrypted."
             exit 1
           fi
 

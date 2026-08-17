@@ -154,6 +154,22 @@ reviewers, and the loser is told the submission was already decided.
 Declining keeps the row with `status = 'declined'` rather than deleting it —
 someone will ask what happened to a submission.
 
+**Deciding erases the submitter's name and address**, whichever way it goes.
+They are collected so the office can reach a person about a submission it has
+not decided yet, and the decision spends that reason: what stays on the row is
+what was proposed, when, and which reviewer decided it. The erasure is part of
+the same `UPDATE` that sets the status, so there is no window where a
+submission is decided and the address is still there, and the retention sweep
+re-runs it as a backstop for anything decided before this existed. A student's
+address should not outlive the queue it was given to, sit in every backup taken
+afterwards, and be read by nothing.
+
+The practical consequence for a reviewer: **the confirmation message after
+approving or declining is the last place that address appears.** It is printed
+there in full for exactly that reason. If you will need to write to them, copy
+it then — or use *Request changes* first, which keeps the submission pending and
+leaves the address in place.
+
 **Nothing here sends mail.** *Request changes* composes the reply and opens it in
 the reviewer's own mail client; approving and declining tell the reviewer to
 contact the submitter themselves. Set `CONFIG.office.email` in
@@ -528,7 +544,18 @@ Three things it deliberately does not touch:
   three different reasons — see `SETTLE_MS` and `ORPHAN_MIN_AGE_MS`.
 
 Nothing here deletes a submission row. Every decision the office ever made is
-still on record; it is only the artwork that goes.
+still on record; it is the artwork that goes, and the submitter's name and
+address with it.
+
+**A fourth thing, which is not about storage at all: contact details left on a
+decided submission.** `approve.js` and `decline.js` each erase the name and
+address in the statement that decides the row, so on a healthy deployment this
+pass finds nothing every time it runs. It is the backstop — for rows decided
+before that behaviour shipped, and for any future path that learns to decide a
+submission and forgets to erase. It has no grace period, unlike the three above:
+their day of settling protects a reviewer who wants a *file* back, and there is
+no equivalent argument for keeping an address an hour longer than the decision.
+`EVENT_RETENTION_MONTHS = "0"` does not turn this off either.
 
 `functions/_lib/retention.js`, with the reasoning in the comments.
 

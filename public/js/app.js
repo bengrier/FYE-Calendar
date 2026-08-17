@@ -1800,7 +1800,8 @@
           ? "on " + D.longDayLabel(result.dates[0])
           : "across " + result.published + " dates";
         return "Approved — “" + sub.title + "” is on the calendar " + where +
-          ". Tell " + sub.by + " yourself: nothing here emails anybody.";
+          ". Tell " + sub.by + " at " + sub.email + " yourself: nothing here " +
+          "emails anybody, and that address has now been erased from the queue.";
       }
     );
   }
@@ -1809,8 +1810,9 @@
     decide(
       function () { return S.decline(sub.id); },
       function () {
-        return "Declined and removed from the queue. Tell " + sub.by +
-          " yourself: nothing here emails anybody.";
+        return "Declined and removed from the queue. Tell " + sub.by + " at " +
+          sub.email + " yourself: nothing here emails anybody, and that " +
+          "address has now been erased from the queue.";
       }
     );
   }
