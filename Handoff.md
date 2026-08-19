@@ -1475,3 +1475,89 @@ away from serving the queue to everybody, and uploaded flyers still carry
 whatever PDF and EXIF metadata the submitter's software put in them. This change
 shrinks the amount of personal data in the system to the current queue. It does
 not change where that queue lives.
+
+### 2026-08-18 — an approval stopped being final
+
+The review screen could publish and it could refuse, and that was the whole of
+it. Once a submission was approved the events it wrote were beyond the office:
+a series approved with an end date three months past anything anybody meant, an
+event cancelled the week after it went up, a custom tag that read fine on one
+flyer and turned out to be a duplicate — every one of those meant a
+`wrangler d1 execute` from a laptop, which in practice meant asking whoever set
+this up, months later, and hoping they still had the credentials. The screen
+that publishes is the screen that should be able to correct.
+
+So the review screen has three tabs now: **Waiting** (the queue, unchanged), **On
+the calendar**, and **Custom tags**. Four new files under
+`functions/api/admin/` — `published.js`, `remove.js`, `reschedule.js`,
+`tag.js` — and the tabs and their two new screens in `js/app.js`. Written up in
+README under [Fixing what is already
+published](README.md#fixing-what-is-already-published).
+
+**The unit is the series, not the event.** One approval writes one event row per
+occurrence and `from_submission` is the only thread between them, so that is
+what the list on the left holds and what the actions work on. "This repeats too
+long" is a statement about six rows, and asking a reviewer to remove six things
+one at a time would be asking them to do the expansion in their head. A seeded
+placeholder has no submission behind it, is a series of one, and comes off by
+its own id — which is now also how the sample content gets cleared without a
+command line.
+
+Four decisions worth knowing before changing any of it:
+
+- **Shortening a series, never lengthening one.** The dates were expanded once,
+  from a repeat rule a person wrote and a reviewer read. Adding to them here
+  would be publishing events nobody submitted, so a longer run means a new
+  submission and the screen says so where the trim control is.
+- **A date can only move to today or later.** An event moved into the past is a
+  typo every time, and the retention sweep deletes events older than the window
+  without asking — a slipped year would take the event off the calendar for good
+  some hours later with nothing to say why. The server's floor is *yesterday*
+  rather than today, because "today" there is UTC and the reviewer is in
+  Colorado: at six in the evening they are already on tomorrow's UTC date, and
+  refusing to move an event to this afternoon would be the server disagreeing
+  with the calendar on the reviewer's own screen.
+- **Un-approving a tag takes it off the events, not just out of the filter
+  bar.** `/api/events` now reads its tags through the `approved` flag, which is
+  the one change in this pass to a public endpoint. Approving already worked
+  this way — a tag the reviewer does not keep is dropped from the event rather
+  than published unfilterable — so the alternative was a chip sitting on a card
+  filtering nothing. Nothing is deleted: the `event_tags` rows stay, so turning
+  it back on puts it back everywhere it was, and that reversibility is why there
+  is no destructive "delete this tag" action at all. The join is a LEFT JOIN
+  kept open on the missing side, so a tag with no catalogue row survives rather
+  than silently vanishing off an event.
+- **Removing starts a retention sweep.** A series that has just lost its last
+  event is an uploaded flyer with nothing pointing at it, and the sweep works
+  off the state of the database rather than off what any run deleted — so it is
+  started after the deletes, never before, the same ordering and for the same
+  reason as `approve.js`.
+
+**Nothing here is undo, and the screen says so twice** — once as the standing
+note at the top of the tab, and once in every button, which takes two presses:
+the first arms it and makes it say what it is about to do, the second does it.
+Not a `confirm()`, which would ask in the browser's voice, in a dialog this page
+cannot style, with an OK button that says nothing about the event. What survives
+a removal is the submission row: what was proposed, when, and which reviewer
+approved it. Every decision the office ever made is still on record, which was
+already true of declines and is now true of un-publishing too.
+
+#### Checked against a local D1, in a browser
+
+A 16-week series approved through the queue, then trimmed to six through the
+screen ("10 events came off the calendar", sidebar and detail both following);
+one occurrence moved from Thursday Sep 10 to Friday Sep 11 and the list
+re-sorting around it; one date removed with the rest of the series untouched; a
+seeded placeholder removed by id, with the calendar behind the overlay dropping
+from three events to two on the same repaint. A typo tag turned off, gone from
+both `customTags` and the event's own tags in `/api/events`, and fully restored
+by turning it back on. `Workshop` refused as a fixed chip, a past date refused,
+an unknown id answered `409`, and every endpoint refusing the wrong method.
+Mobile at 375px with no horizontal overflow.
+
+#### What it deliberately cannot do
+
+Edit an event's title, time, place, blurb or flyer. The calendar's record of
+what was approved should not quietly stop matching what was approved, so a club
+that needs different words sends the submission again. The only mutable field is
+the date, and only forwards.

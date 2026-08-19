@@ -104,7 +104,22 @@
     changesOpen: false,
     feedback: "",
     deciding: false,
-    note: ""
+    note: "",
+
+    /* review screen — which of its three tabs is up. "queue" is what is
+       waiting on the office, "events" what is already on the calendar, "tags"
+       the custom vocabulary the calendar has accumulated. */
+    reviewTab: "queue",
+
+    // review screen, the published-events tab
+    pubSel: null,        // key of the series being looked at
+    pubQuery: "",        // narrows the list on the left
+    pubMove: null,       // id of the occurrence whose date is being changed
+    pubMoveDate: "",
+    pubTrimAfter: "",    // the last date a trim would keep
+    pubConfirm: null,    // which removal has been armed by its first press
+    pubBusy: false,
+    pubNote: ""
   };
 
   var overlays = one("#overlays");
@@ -431,7 +446,7 @@
     } else if (lower === "#review") {
       state.reviewOpen = true;
       state.note = "";
-      refreshQueue();
+      refreshReview();
     } else if (lower === "#submit") {
       state.submitOpen = true;
     } else if (lower === "#slideshow") {
@@ -1748,9 +1763,9 @@
      Review queue
      ====================================================================== */
 
-  /* "2 days ago" reads better than a date on a queue you work through daily,
-     and the exact timestamp is one hover away. */
-  function whenSubmitted(ms) {
+  /* "2 days ago" reads better than a date on a screen you work through daily —
+     for a submission waiting and for an event already published alike. */
+  function howLongAgo(ms) {
     if (!ms) return "recently";
     var days = Math.floor((Date.now() - ms) / 86400000);
     if (days <= 0) return "today";
@@ -1873,6 +1888,34 @@
     ]);
   }
 
+  /* The artwork itself, not a stand-in: it is uploaded and served before
+     anyone reviews it, so the reviewer sees what students would. A PDF has no
+     thumbnail in an <img>, so the hatched sheet still covers that case.
+
+     Resolved through the store rather than straight off /uploads, because the
+     published tab shows seeded events too and their artwork is a file in the
+     repo. `flyer()` is the one place that difference is known. */
+  function flyerProof(key, title) {
+    var art = S.flyer(key);
+    if (!art) return null;
+
+    return el("a", {
+      class: "flyerproof",
+      href: art.page,
+      target: "_blank",
+      rel: "noopener"
+    }, [
+      /\.pdf$/i.test(art.image)
+        ? el("div", { class: "flyerproof__sheet" })
+        : el("img", {
+            class: "flyerproof__image",
+            src: art.image,
+            alt: "Flyer submitted for " + title
+          }),
+      el("div", { class: "flyerproof__name", text: "Open the full page" })
+    ]);
+  }
+
   function newTagChip(tag) {
     var chip = el("span", { class: "chip chip--lg chip--new" });
 
@@ -1898,7 +1941,7 @@
     return chip;
   }
 
-  function reviewBody() {
+  function queueScreen() {
     var sub = currentSubmission();
     if (!sub) return reviewEmpty();
 
@@ -1963,7 +2006,20 @@
       ])
     ]);
 
-    return el("div", { class: "review" }, [
+    return [
+
+      /* Approving is immediate and public, which is worth saying once at the
+         top: every version of this screen before the database only changed the
+         reviewer's own browser, and anyone who used one of those will assume
+         this one does too. */
+      el("div", { class: "reviewnote" }, [
+        el("strong", { text: "Approving publishes straight away." }),
+        " An approved event is on the live calendar within the minute, for " +
+        "everybody. Declining removes the submission from this queue but " +
+        "keeps a record of it."
+      ]),
+
+      el("div", { class: "review" }, [
 
       el("aside", { class: "queue" }, [
         el("div", { class: "queue__head" }, [
@@ -1986,7 +2042,7 @@
             el("span", { class: "queue__title", text: p.title }),
             el("span", { class: "queue__org", text: p.org }),
             el("span", { class: "queue__sent" }, [
-              "Sent " + whenSubmitted(p.submittedAt),
+              "Sent " + howLongAgo(p.submittedAt),
               p.awaiting ? el("span", { class: "queue__flag", text: " · changes requested" }) : null
             ])
           ]);
@@ -2053,25 +2109,7 @@
           el("div", {}, [
             el("span", { class: "meta__label meta__label--flyer", text: "Flyer" }),
             sub.flyer
-              ? el("a", {
-                  class: "flyerproof",
-                  href: "/uploads/" + sub.flyer,
-                  target: "_blank",
-                  rel: "noopener"
-                }, [
-                  /* The artwork itself, not a stand-in: it is uploaded and
-                     served before anyone reviews it, so the reviewer sees what
-                     students would. A PDF has no thumbnail in an <img>, so the
-                     hatched sheet still covers that case. */
-                  /\.pdf$/i.test(sub.flyer)
-                    ? el("div", { class: "flyerproof__sheet" })
-                    : el("img", {
-                        class: "flyerproof__image",
-                        src: "/uploads/" + sub.flyer,
-                        alt: "Flyer submitted for " + sub.title
-                      }),
-                  el("div", { class: "flyerproof__name", text: "Open the full page" })
-                ])
+              ? flyerProof(sub.flyer, sub.title)
               : el("div", {
                   class: "meta__none",
                   text: "No flyer attached. The event will show as a text listing."
@@ -2099,11 +2137,648 @@
           ]),
           el("div", {}, [
             el("div", { class: "meta__label", text: "Received" }),
-            el("div", { class: "meta__value", text: whenSubmitted(sub.submittedAt) })
+            el("div", { class: "meta__value", text: howLongAgo(sub.submittedAt) })
           ])
         ])
       ])
+      ])
+    ];
+  }
+
+  /* ======================================================================
+     Review screen — what is already on the calendar
+
+     The queue above decides what gets published. This decides what stays: an
+     event that was cancelled the week after it went up, a series approved with
+     an end date three months past the point anybody meant, a custom tag that
+     read fine on one flyer and turns out to be a duplicate of one the calendar
+     already had.
+
+     None of it was possible before. An approval was final, and fixing one
+     meant a `wrangler d1 execute` from somebody's laptop — which is to say it
+     meant asking whoever set this up, months later, and hoping they still had
+     the credentials. Every action here is a delete or a move, so each one says
+     what it will do and takes a second press to do it.
+     ====================================================================== */
+
+  /* One approval writes one event per occurrence, and the submission id every
+     one of them carries is the only thread between them. That thread is what a
+     reviewer works on — "this repeats too long" is a statement about six rows —
+     so the list on the left is series, not events.
+
+     A seeded placeholder has no submission behind it and is a series of one.
+     The events arrive in date order, so each group is in date order too and the
+     groups come out in the order the calendar reads. */
+  function seriesGroups() {
+    var groups = {};
+    var order = [];
+
+    S.published().forEach(function (ev) {
+      var key = ev.series || ("one:" + ev.id);
+      if (!groups[key]) {
+        groups[key] = { key: key, series: ev.series, lead: ev, events: [] };
+        order.push(key);
+      }
+      groups[key].events.push(ev);
+    });
+
+    return order.map(function (key) { return groups[key]; });
+  }
+
+  function matchingGroups() {
+    var q = state.pubQuery.trim().toLowerCase();
+    var groups = seriesGroups();
+    if (!q) return groups;
+
+    return groups.filter(function (g) {
+      return (g.lead.title + " " + g.lead.org + " " + g.lead.place)
+        .toLowerCase().indexOf(q) > -1;
+    });
+  }
+
+  /* The selection is held as a key rather than an index, because the list it
+     points into changes under it — a removal shortens it, and the search box
+     rewrites it entirely. A key that is no longer in the list falls back to the
+     first thing that is, which is what someone who has just removed a series
+     expects to be looking at. */
+  function currentGroup() {
+    var groups = matchingGroups();
+    if (!groups.length) return null;
+    return groups.filter(function (g) { return g.key === state.pubSel; })[0] || groups[0];
+  }
+
+  function groupWhen(g) {
+    if (g.events.length === 1) return D.shortDayLabel(g.events[0].date);
+    return g.events.length + " dates · " + D.shortDayLabel(g.events[0].date) +
+      " – " + D.shortDayLabel(g.events[g.events.length - 1].date);
+  }
+
+  /* Every date on it has been and gone. Worth marking, because a finished
+     series is the most likely thing in the list to be removable and the least
+     likely thing to be urgent. */
+  function groupIsPast(g) {
+    return g.events[g.events.length - 1].date < C.CONFIG.today;
+  }
+
+  /* The same shape as `decide` above the queue, and for the same reasons: one
+     change at a time, the screen stays exactly as it is until the server has
+     agreed, and a failure is said out loud instead of leaving a button that
+     looks like it did nothing. `render` rather than `renderReview` at the end —
+     an event coming off the calendar changes the grid behind this overlay. */
+  function act(work, done) {
+    if (state.pubBusy) return;
+    state.pubBusy = true;
+    state.pubNote = "";
+    renderReview();
+
+    work()
+      .then(function (result) {
+        state.pubConfirm = null;
+        state.pubMove = null;
+        state.pubNote = done(result);
+      })
+      .catch(function (err) {
+        state.pubNote = (err && err.message) || "That could not be saved.";
+      })
+      .then(function () {
+        state.pubBusy = false;
+        render();
+      });
+  }
+
+  /* Removing is not undoable, so it takes two presses: the first arms the
+     button and makes it say what it is about to do, the second does it. A
+     browser `confirm()` would ask in the browser's voice, in a dialog this page
+     cannot style, with an OK button that says nothing about the event. */
+  function armed(key) { return state.pubConfirm === key; }
+
+  function arm(key) {
+    state.pubConfirm = armed(key) ? null : key;
+    state.pubNote = "";
+    state.pubMove = null;
+    renderReview();
+  }
+
+  function occurrenceRow(g, ev) {
+    var past = ev.date < C.CONFIG.today;
+    var key = "one:" + ev.id;
+
+    var day = el("span", { class: "dates__day" + (past ? " dates__day--past" : "") }, [
+      D.longDayLabel(ev.date),
+      past ? el("span", { class: "dates__mark", text: "gone by" }) : null
     ]);
+
+    if (state.pubMove === ev.id) {
+      var save = el("button", {
+        type: "button", class: "btn-primary", text: "Move it",
+        onClick: function () {
+          act(
+            function () { return S.rescheduleEvent(ev.id, state.pubMoveDate); },
+            function (result) {
+              /* Named by the date that moved, not by the event: a series has
+                 fifteen of these and "the event moved" would read as all of
+                 them having moved. */
+              return D.longDayLabel(ev.date) + " moves to " +
+                D.longDayLabel(result.date) + ", for everybody, within the minute.";
+            }
+          );
+        }
+      });
+
+      var settled = function (value) {
+        save.disabled = state.pubBusy || !value || value === ev.date;
+      };
+
+      var picker = el("input", {
+        type: "date",
+        class: "input input--sm dates__picker",
+        value: state.pubMoveDate,
+        min: C.CONFIG.today,
+        onInput: function (e) {
+          /* Held in state so a repaint does not lose it, and settling the
+             button by hand so typing a date does not rebuild the row the input
+             is in — the caret would go with it. */
+          state.pubMoveDate = e.target.value;
+          settled(e.target.value);
+        }
+      });
+
+      settled(state.pubMoveDate);
+
+      return el("div", { class: "dates__row" }, [
+        day,
+        el("div", { class: "dates__acts" }, [
+          picker,
+          save,
+          el("button", {
+            type: "button", class: "btn-quiet", text: "Cancel",
+            onClick: function () { state.pubMove = null; renderReview(); }
+          })
+        ])
+      ]);
+    }
+
+    var actions = armed(key)
+      ? [
+          el("button", {
+            type: "button", class: "btn-decline btn-decline--armed",
+            text: "Remove this date — sure?",
+            onClick: function () {
+              act(
+                function () { return S.removeEvent({ id: ev.id }); },
+                function () {
+                  return D.longDayLabel(ev.date) + " is off the calendar. " +
+                    (g.events.length > 1
+                      ? "The rest of the series is untouched."
+                      : "Nothing of “" + g.lead.title + "” is left on it.");
+                }
+              );
+            }
+          }),
+          el("button", {
+            type: "button", class: "btn-quiet", text: "Keep it",
+            onClick: function () { arm(key); }
+          })
+        ]
+      : [
+          /* Quiet rather than btn-link: that is the same magenta as the
+             Remove beside it, and the two must not read as a pair of equals. */
+          el("button", {
+            type: "button", class: "btn-quiet", text: "Move",
+            onClick: function () {
+              state.pubConfirm = null;
+              state.pubMove = ev.id;
+              state.pubMoveDate = ev.date;
+              state.pubNote = "";
+              renderReview();
+            }
+          }),
+          el("button", {
+            type: "button", class: "btn-decline", text: "Remove",
+            onClick: function () { arm(key); }
+          })
+        ];
+
+    actions.forEach(function (node) { node.disabled = state.pubBusy; });
+
+    return el("div", { class: "dates__row" }, [day, el("div", { class: "dates__acts" }, actions)]);
+  }
+
+  /* The one this whole screen was asked for: a series that repeats for longer
+     than anybody meant. Said as "keep up to here", because that is the decision
+     — the reviewer knows which date is the last real one, not how many dates
+     are surplus. */
+  function trimBlock(g) {
+    var dates = g.events.map(function (e) { return e.date; });
+    var keepable = dates.slice(0, -1);
+    var chosen = keepable.indexOf(state.pubTrimAfter) > -1 ? state.pubTrimAfter : keepable[0];
+    var after = dates.filter(function (d) { return d > chosen; });
+    var key = "trim:" + g.key + ":" + chosen;
+
+    var select = el("select", {
+      class: "select select--tag",
+      "aria-label": "Keep dates up to and including",
+      onChange: function (e) {
+        state.pubTrimAfter = e.target.value;
+        state.pubConfirm = null;
+        renderReview();
+      }
+    }, keepable.map(function (d) {
+      return el("option", { value: d, text: D.shortDayLabel(d) });
+    }));
+    select.value = chosen;
+
+    var go = el("button", {
+      type: "button",
+      class: armed(key) ? "btn-decline btn-decline--armed" : "btn-decline",
+      text: armed(key)
+        ? "Remove " + after.length + (after.length === 1 ? " date" : " dates") + " — sure?"
+        : "Cut the " + after.length + (after.length === 1 ? " date" : " dates") + " after it",
+      onClick: function () {
+        if (!armed(key)) { arm(key); return; }
+        act(
+          function () { return S.removeEvent({ series: g.series, from: after[0] }); },
+          function (result) {
+            return "“" + g.lead.title + "” now ends on " + D.longDayLabel(chosen) +
+              ". " + result.removed + (result.removed === 1 ? " event" : " events") +
+              " came off the calendar.";
+          }
+        );
+      }
+    });
+    go.disabled = state.pubBusy;
+    select.disabled = state.pubBusy;
+
+    return el("div", { class: "sub__block" }, [
+      el("div", { class: "field__label", text: "It repeats too long" }),
+      el("div", { class: "trim" }, [
+        el("span", { class: "trim__lead", text: "Keep dates up to and including" }),
+        select,
+        go
+      ]),
+      el("div", {
+        class: "trim__hint",
+        text: "Only shortening. A series is expanded once, from the repeat rule " +
+          "the reviewer read when they approved it — adding dates here would be " +
+          "publishing events nobody submitted, so a longer run means a new submission."
+      })
+    ]);
+  }
+
+  function publishedSub(g) {
+    var lead = g.lead;
+    var many = g.events.length > 1;
+    var rule = g.series ? S.seriesRule(g.series) : null;
+    var allKey = "all:" + g.key;
+
+    var removeAll = el("button", {
+      type: "button",
+      class: armed(allKey) ? "btn-decline btn-decline--armed" : "btn-decline",
+      text: armed(allKey)
+        ? (many ? "Remove all " + g.events.length + " — sure?" : "Remove it — sure?")
+        : (many ? "Remove all " + g.events.length + " dates" : "Remove it from the calendar"),
+      onClick: function () {
+        if (!armed(allKey)) { arm(allKey); return; }
+        act(
+          function () {
+            /* By series where there is one, so a single statement takes the
+               whole thing. A seeded placeholder has no submission behind it and
+               goes by its own id — which is how the samples get cleared out. */
+            return S.removeEvent(g.series ? { series: g.series } : { id: lead.id });
+          },
+          function (result) {
+            /* Only say the submission is kept when there is one. A seeded
+               placeholder was never submitted by anybody, and telling a
+               reviewer there is a record of who approved it would be inventing
+               one. */
+            return "“" + lead.title + "” is off the calendar — " + result.removed +
+              (result.removed === 1 ? " event" : " events") + " removed." +
+              (g.series
+                ? " The submission behind it is kept, so there is still a record " +
+                  "of what was approved and by whom."
+                : "");
+          }
+        );
+      }
+    });
+    removeAll.disabled = state.pubBusy;
+
+    return el("div", { class: "sub" }, [
+      el("div", { class: "kicker", text: lead.org }),
+      el("h3", { class: "sub__title", text: lead.title }),
+      el("div", { class: "sub__when", text: lead.time + " · " + lead.place }),
+
+      el("div", {
+        class: many ? "sub__series" : "sub__rule",
+        text: many
+          ? g.events.length + " events on the calendar, " +
+            D.shortDayLabel(g.events[0].date) + " through " +
+            D.shortDayLabel(g.events[g.events.length - 1].date) + "."
+          : "One event, " + D.longDayLabel(lead.date) + "."
+      }),
+
+      /* The sentence the reviewer read before they pressed Approve. Saying it
+         back is how somebody recognises the series they came here about. */
+      rule && rule.repeat
+        ? el("div", { class: "sub__rule", text: "Approved as: " + C.repeatLabel(rule.repeat, rule.repeatUntil) })
+        : null,
+
+      lead.temporary
+        ? el("div", {
+            class: "sub__rule",
+            text: "One of the seeded placeholders. The calendar already tells " +
+              "students these are made up; removing them is how that notice goes away."
+          })
+        : null,
+
+      el("p", { class: "sub__blurb", text: lead.blurb }),
+
+      el("div", { class: "sub__block" }, [
+        el("div", { class: "field__label", text: many ? "Dates" : "Date" }),
+        el("div", { class: "dates" }, g.events.map(function (ev) { return occurrenceRow(g, ev); }))
+      ]),
+
+      many && g.series ? trimBlock(g) : null,
+
+      el("div", { class: "sub__decide" }, [removeAll]),
+
+      state.pubNote ? el("div", { class: "sub__note", text: state.pubNote }) : null
+    ]);
+  }
+
+  /* A tag as it stands on a published event: whether students can currently
+     see and filter by it. A name the catalogue does not know is one of the
+     fixed chips from js/data.js, which are not anybody's to turn off. */
+  function publishedTagChip(name) {
+    var known = S.tagCatalog().filter(function (t) { return t.name === name; })[0];
+    if (!known || known.approved) return el("span", { class: "chip chip--lg", text: name });
+
+    return el("span", { class: "chip chip--lg chip--off" }, [
+      name,
+      el("span", { class: "chip__mark", text: "off" })
+    ]);
+  }
+
+  function publishedMeta(g) {
+    var lead = g.lead;
+
+    return el("div", { class: "meta" }, [
+      el("div", {}, [
+        el("span", { class: "meta__label meta__label--flyer", text: "Flyer" }),
+        lead.flyer
+          ? flyerProof(lead.flyer, lead.title)
+          : el("div", {
+              class: "meta__none",
+              text: "No flyer. It shows as a text listing."
+            })
+      ]),
+      el("div", {}, [
+        el("div", { class: "meta__label", text: "Tags" }),
+        el("div", { class: "sub__chips" }, lead.tags.map(publishedTagChip)),
+        el("div", {
+          class: "meta__check",
+          text: "Every date in a series carries the same tags. A custom tag " +
+            "marked “off” is one the office has turned off — it is on the row " +
+            "but students do not see it. Custom tags is the tab that changes that."
+        })
+      ]),
+      el("div", {}, [
+        el("div", { class: "meta__label", text: "Published" }),
+        el("div", { class: "meta__value", text: howLongAgo(lead.publishedAt) })
+      ])
+    ]);
+  }
+
+  function publishedEmpty() {
+    var st = S.state();
+
+    return el("div", { class: "done" }, [
+      el("div", { class: "done__kicker", text: st.error ? "Not loaded" : "Nothing published" }),
+      el("h3", {
+        class: "done__title",
+        text: st.error ? "That list could not be loaded." : "The calendar is empty."
+      }),
+      el("p", {
+        class: "done__body",
+        text: st.error
+          ? errorText(st.error) + " Nothing has been changed."
+          : "Approved events appear here, one line per series, as soon as they are published."
+      }),
+      state.pubNote ? el("div", { class: "done__note", text: state.pubNote }) : null,
+      el("div", { class: "done__actions" },
+        el("button", { type: "button", class: "btn-primary", text: "Back to calendar", onClick: leaveReview }))
+    ]);
+  }
+
+  function publishedScreen() {
+    if (!S.published().length) return [publishedNote(), publishedEmpty()];
+
+    var list = el("div", { class: "queue__list" });
+    var panes = el("div", { class: "review__panes" });
+
+    function paint() {
+      var g = currentGroup();
+
+      fill(list, matchingGroups().map(function (item) {
+        return el("button", {
+          type: "button",
+          class: "queue__item" + (g && item.key === g.key ? " is-on" : ""),
+          onClick: function () {
+            state.pubSel = item.key;
+            state.pubNote = "";
+            state.pubConfirm = null;
+            state.pubMove = null;
+            renderReview();
+          }
+        }, [
+          el("span", { class: "queue__title", text: item.lead.title }),
+          el("span", { class: "queue__org", text: item.lead.org }),
+          el("span", { class: "queue__sent" }, [
+            groupWhen(item),
+            groupIsPast(item) ? el("span", { class: "queue__flag", text: " · finished" }) : null
+          ])
+        ]);
+      }));
+
+      fill(panes, g
+        ? [publishedSub(g), publishedMeta(g)]
+        : el("div", {
+            class: "meta__none",
+            text: "Nothing here matches “" + state.pubQuery.trim() + "”."
+          }));
+    }
+
+    var search = el("input", {
+      type: "search",
+      class: "input input--sm queue__search",
+      placeholder: "Find an event",
+      "aria-label": "Find a published event",
+      value: state.pubQuery,
+      onInput: function (e) {
+        /* Only the list and the detail are repainted, never this box: rebuilt,
+           it would lose the caret on every keystroke. Same reason the feedback
+           box up in the queue is patched rather than rebuilt. */
+        state.pubQuery = e.target.value;
+        paint();
+      }
+    });
+
+    paint();
+
+    return [
+      publishedNote(),
+      el("div", { class: "review" }, [
+        el("aside", { class: "queue" }, [
+          el("div", { class: "queue__head" }, [
+            el("span", { class: "kicker", text: "On the calendar" }),
+            el("span", { class: "queue__count", text: String(seriesGroups().length) })
+          ]),
+          search,
+          list
+        ]),
+        panes
+      ])
+    ];
+  }
+
+  function publishedNote() {
+    return el("div", { class: "reviewnote" }, [
+      el("strong", { text: "Everything here is live." }),
+      " Removing an event takes it off the calendar for everybody within the " +
+      "minute, and moving a date moves it for everybody. Neither can be undone " +
+      "from this screen — the events are gone, and only the submission behind " +
+      "them is kept."
+    ]);
+  }
+
+  /* ======================================================================
+     Review screen — the custom tags the calendar has accumulated
+     ====================================================================== */
+
+  function tagRow(t) {
+    var button = el("button", {
+      type: "button",
+      class: t.approved ? "btn-decline" : "btn-outline-accent",
+      text: t.approved ? "Turn it off" : "Turn it back on",
+      onClick: function () {
+        act(
+          function () { return S.setTagApproved(t.name, !t.approved); },
+          function () {
+            return t.approved
+              ? "“" + t.name + "” is off. It has gone from the filter bar and " +
+                "from the events carrying it, and turning it back on puts it back."
+              : "“" + t.name + "” is filterable again, and back on the " +
+                (t.uses === 1 ? "event" : t.uses + " events") + " carrying it.";
+          }
+        );
+      }
+    });
+    button.disabled = state.pubBusy;
+
+    return el("div", { class: "tagcat__row" }, [
+      el("div", { class: "tagcat__main" }, [
+        el("span", { class: "tagcat__name", text: t.name }),
+        el("span", {
+          class: "tagcat__uses",
+          text: t.uses === 0
+            ? "on nothing that is still on the calendar"
+            : t.uses === 1 ? "on 1 event" : "on " + t.uses + " events"
+        })
+      ]),
+      el("span", {
+        class: "tagcat__state" + (t.approved ? "" : " tagcat__state--off"),
+        text: t.approved ? "Filterable" : "Turned off"
+      }),
+      button
+    ]);
+  }
+
+  function tagsScreen() {
+    var catalog = S.tagCatalog();
+
+    var note = el("div", { class: "reviewnote" }, [
+      el("strong", { text: "Turning a tag off takes it off the events too." }),
+      " Not just out of the filter bar: the chip stops appearing on every event " +
+      "carrying it, which is the same rule approving already follows — a tag a " +
+      "reviewer does not keep is dropped from the event rather than published " +
+      "unfilterable. Nothing is deleted, so turning it back on puts it back " +
+      "everywhere it was. Only tags submitters wrote are listed; the filter " +
+      "bar's own chips are not anybody's to turn off."
+    ]);
+
+    if (!catalog.length) {
+      return [note, el("div", { class: "done" }, [
+        el("div", { class: "done__kicker", text: "None yet" }),
+        el("h3", { class: "done__title", text: "No custom tags." }),
+        el("p", {
+          class: "done__body",
+          text: "A tag a submitter invents appears here once a reviewer keeps it on the way past."
+        })
+      ])];
+    }
+
+    return [
+      note,
+      el("div", { class: "tagcat" }, [
+        state.pubNote ? el("div", { class: "tagcat__note", text: state.pubNote }) : null,
+        catalog.map(tagRow)
+      ])
+    ];
+  }
+
+  /* ======================================================================
+     Review screen — the three tabs
+     ====================================================================== */
+
+  function reviewTabs() {
+    var tabs = [
+      { key: "queue", label: "Waiting", count: S.queue().length },
+      { key: "events", label: "On the calendar", count: seriesGroups().length },
+      { key: "tags", label: "Custom tags", count: S.tagCatalog().length }
+    ];
+
+    return el("div", { class: "revtabs", role: "tablist" }, tabs.map(function (t) {
+      var on = state.reviewTab === t.key;
+      return el("button", {
+        type: "button",
+        role: "tab",
+        id: "revtab-" + t.key,
+        "aria-selected": on ? "true" : "false",
+        class: "revtabs__tab" + (on ? " is-on" : ""),
+        onClick: function () {
+          if (on) return;
+          state.reviewTab = t.key;
+          /* Nothing half-done follows you between tabs: an armed removal or a
+             half-typed date belongs to the screen it was started on. */
+          state.pubConfirm = null;
+          state.pubMove = null;
+          state.pubNote = "";
+          state.note = "";
+          renderReview();
+        }
+      }, [
+        el("span", { class: "revtabs__label", text: t.label }),
+        el("span", { class: "revtabs__count", text: String(t.count) })
+      ]);
+    }));
+  }
+
+  function reviewBody() {
+    var screen = state.reviewTab === "events" ? publishedScreen()
+      : state.reviewTab === "tags" ? tagsScreen()
+      : queueScreen();
+
+    /* The panel is a sibling of the tab strip and named by the tab that is
+       showing it, which is what makes three buttons that swap the page under
+       them read as tabs to a screen reader rather than as three unrelated
+       presses. */
+    return [
+      reviewTabs(),
+      el("div", {
+        role: "tabpanel",
+        "aria-labelledby": "revtab-" + state.reviewTab
+      }, screen)
+    ];
   }
 
   var reviewNode = null;
@@ -2119,26 +2794,17 @@
       return;
     }
 
+    /* The tabs are part of the body rather than the frame, because their
+       counts change with everything below them — a removal is one fewer on the
+       calendar, an approval one fewer waiting — and the body is what repaints.
+       Each tab carries its own standing note for the same reason: what is true
+       of approving is not what is true of removing. */
     reviewNode = el("div", { class: "overlay overlay--review" }, [
       csuHeader("Review Queue", "csu-header__title--sub",
         el("button", {
           type: "button", class: "btn-brand btn-brand--ghost btn-brand--sm",
           text: "Back to calendar", onClick: leaveReview
         })),
-      /* Approving changes what this browser shows, not what the site serves.
-         That gap is the one thing about this screen someone could get wrong,
-         so it is stated at the top rather than left to be discovered after a
-         reviewer wonders why students cannot see the event. */
-      /* Approving is now immediate and public, which is worth saying once at
-         the top: every previous version of this screen only changed the
-         reviewer's own browser, and anyone who used one of those will assume
-         this one does too. */
-      el("div", { class: "reviewnote" }, [
-        el("strong", { text: "Approving publishes straight away." }),
-        " An approved event is on the live calendar within the minute, for " +
-        "everybody. Declining removes the submission from this queue but " +
-        "keeps a record of it."
-      ]),
       el("div", { "data-review-body": true }, reviewBody())
     ]);
     overlays.appendChild(reviewNode);
@@ -2149,14 +2815,15 @@
     state.reviewOpen = true;
     state.note = "";
     render();
-    refreshQueue();
+    refreshReview();
   }
 
-  /* The queue is behind Access and is not fetched with the calendar, so it is
-     asked for whenever this screen opens — by button, by keyboard or by URL,
+  /* Everything this screen runs on — the queue, the published events, the tag
+     catalogue — is behind Access and is not fetched with the calendar, so it is
+     asked for whenever the screen opens: by button, by keyboard or by URL,
      which is why it lives here rather than in one of them. Refreshed on every
-     open, since another reviewer may have worked through it since. */
-  function refreshQueue() {
+     open, since another reviewer may have been working through it since. */
+  function refreshReview() {
     S.hydrate(true, true).catch(function () { /* reported by the store's state */ });
   }
 
@@ -2185,6 +2852,10 @@
     state.changesOpen = false;
     state.feedback = "";
     state.approvedNew = [];
+    /* An armed removal must not still be armed when the screen comes back. */
+    state.pubConfirm = null;
+    state.pubMove = null;
+    state.pubNote = "";
     render();
     restoreFocus();
   }

@@ -27,7 +27,14 @@ window.CalStore = (function () {
     customTags: [],
     queue: [],
     queueTags: {},
-    queueNewTags: {}
+    queueNewTags: {},
+    /* The review screen's view of what is already published: every event with
+       the submission that produced it, that submission's repeat rule, and the
+       custom tag catalogue with its approval state. Only filled on the review
+       screen, because only /api/admin can answer for it. */
+    published: [],
+    seriesRules: {},
+    tagCatalog: []
   };
 
   var listeners = [];
@@ -55,9 +62,11 @@ window.CalStore = (function () {
     });
   }
 
-  /* Read the calendar. `withQueue` additionally asks for the review queue,
-     which is behind Access — so it is only requested on the review screen, and
-     a refusal there is reported rather than swallowed.
+  /* Read the calendar. `withQueue` additionally asks for the two things the
+     review screen runs on — the queue of submissions waiting, and everything
+     already published — both of which are behind Access. They are only
+     requested on that screen, and a refusal there is reported rather than
+     swallowed.
 
      `fresh` bypasses the caches. /api/events is cached for a minute at the
      edge, which is right for the hundreds of people reading the calendar and
@@ -71,7 +80,10 @@ window.CalStore = (function () {
 
     var eventsUrl = fresh ? "/api/events?t=" + Date.now() : "/api/events";
     var wanted = [request(eventsUrl)];
-    if (withQueue) wanted.push(request("/api/admin/queue"));
+    if (withQueue) {
+      wanted.push(request("/api/admin/queue"));
+      wanted.push(request("/api/admin/published"));
+    }
 
     return Promise.all(wanted)
       .then(function (results) {
@@ -82,6 +94,12 @@ window.CalStore = (function () {
           cache.queue = results[1].queue || [];
           cache.queueTags = results[1].tags || {};
           cache.queueNewTags = results[1].newTags || {};
+        }
+
+        if (results[2]) {
+          cache.published = results[2].events || [];
+          cache.seriesRules = results[2].series || {};
+          cache.tagCatalog = results[2].tags || [];
         }
 
         status.loaded = true;
@@ -120,6 +138,21 @@ window.CalStore = (function () {
   }
 
   function queue() { return cache.queue; }
+
+  /* Everything on the calendar as the reviewer sees it, which is not quite what
+     `events()` holds: these carry the submission that produced them and every
+     tag on the row, including ones nobody can currently filter by. */
+  function published() { return cache.published; }
+
+  /* The repeat rule a series was approved from — the sentence the reviewer read
+     before they pressed Approve. Absent for the seeded events, which had no
+     submission behind them. */
+  function seriesRule(id) { return cache.seriesRules[id] || null; }
+
+  /* Every custom tag the calendar knows, approved or not, with how many events
+     carry it. `customTags()` above is the filter bar's list and holds only the
+     approved ones; this is the list the office decides that from. */
+  function tagCatalog() { return cache.tagCatalog; }
 
   function customTags() { return cache.customTags; }
 
@@ -221,6 +254,41 @@ window.CalStore = (function () {
     });
   }
 
+  /* The three things the review screen can do to a published event. Each
+     re-hydrates before it resolves, and each does so with `fresh` set: the
+     calendar is cached for a minute at the edge, and a reviewer who removes an
+     event and still sees it concludes the removal failed. */
+
+  function removeEvent(what) {
+    return request("/api/admin/remove", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(what)
+    }).then(function (result) {
+      return hydrate(true, true).then(function () { return result; });
+    });
+  }
+
+  function rescheduleEvent(id, date) {
+    return request("/api/admin/reschedule", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: id, date: date })
+    }).then(function (result) {
+      return hydrate(true, true).then(function () { return result; });
+    });
+  }
+
+  function setTagApproved(name, approved) {
+    return request("/api/admin/tag", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name, approved: approved })
+    }).then(function (result) {
+      return hydrate(true, true).then(function () { return result; });
+    });
+  }
+
   function noteFeedback(id) {
     return request("/api/admin/feedback", {
       method: "POST",
@@ -237,6 +305,9 @@ window.CalStore = (function () {
     events: events,
     eventById: eventById,
     queue: queue,
+    published: published,
+    seriesRule: seriesRule,
+    tagCatalog: tagCatalog,
     customTags: customTags,
     submissionTags: submissionTags,
     submissionNewTags: submissionNewTags,
@@ -248,6 +319,9 @@ window.CalStore = (function () {
     submit: submit,
     approve: approve,
     decline: decline,
+    removeEvent: removeEvent,
+    rescheduleEvent: rescheduleEvent,
+    setTagApproved: setTagApproved,
     noteFeedback: noteFeedback,
     onChange: onChange
   };

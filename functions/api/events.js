@@ -18,7 +18,17 @@ export async function onRequest(context) {
       "SELECT id, date, start, time, title, org, place, blurb, flyer_key, temporary " +
       "FROM events ORDER BY date, start"
     ),
-    db.prepare("SELECT event_id, tag FROM event_tags"),
+    /* Through the `approved` flag, not around it. A custom tag the office has
+       turned off in the review screen stops appearing on the event as well as
+       in the filter bar — half of that would leave a chip on a card that
+       filters nothing. The LEFT JOIN keeps a tag with no catalogue row rather
+       than silently dropping it: nothing writes one today, and an event losing
+       a tag because a row is missing is the wrong way to find that out. */
+    db.prepare(
+      "SELECT et.event_id, et.tag FROM event_tags et " +
+      "LEFT JOIN tags t ON t.name = et.tag " +
+      "WHERE t.name IS NULL OR t.approved = 1"
+    ),
     db.prepare("SELECT name FROM tags WHERE approved = 1 AND kind = 'custom' ORDER BY name")
   ]);
 

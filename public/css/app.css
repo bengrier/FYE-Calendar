@@ -1440,6 +1440,156 @@ textarea.input { font-size: 17px; line-height: 1.5; resize: vertical; }
 
 .queue__flag { color: var(--color-accent-2-deep); }
 
+/* --- review screen: the three tabs --------------------------------------- */
+
+/* Under the header rather than in it: the header is the university's, and
+   these are this screen's own. The rule underneath runs the full width so the
+   selected tab reads as the sheet in front. */
+.revtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  margin: 0 40px;
+  border-bottom: 1px solid var(--ink-20);
+  padding-top: 22px;
+}
+.revtabs__tab {
+  all: unset;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  padding: 12px 18px;
+  font-size: 17px;
+  color: var(--ink-65);
+  border-bottom: 3px solid transparent;
+  margin-bottom: -1px;
+}
+.revtabs__tab:hover { color: var(--color-text); background: var(--accent-tint-hover); }
+.revtabs__tab.is-on {
+  color: var(--color-text);
+  font-weight: 700;
+  border-bottom-color: var(--color-accent);
+}
+.revtabs__count {
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  color: var(--ink-50);
+}
+.revtabs__tab.is-on .revtabs__count { color: var(--color-accent-2-deep); }
+
+/* --- review screen: what is already on the calendar ---------------------- */
+
+.queue__search { margin-bottom: 10px; width: 100%; }
+.queue__list { display: flex; flex-direction: column; }
+
+.sub__rule {
+  font-size: 16px;
+  color: var(--ink-65);
+  margin-top: 6px;
+  line-height: 1.5;
+}
+
+.dates { margin-top: 10px; border-top: 1px solid var(--ink-10); }
+.dates__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--ink-10);
+}
+.dates__day { font-size: 18px; }
+.dates__day--past { color: var(--ink-50); }
+.dates__mark {
+  font-size: 13px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-45);
+  margin-left: 10px;
+}
+.dates__acts { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; }
+.dates__picker { width: auto; }
+
+.trim {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
+}
+.trim__lead { font-size: 17px; color: var(--ink-70); }
+.trim__hint {
+  font-size: 15px;
+  color: var(--ink-55);
+  line-height: 1.5;
+  margin-top: 12px;
+  max-width: 40em;
+}
+
+/* Armed by its first press. Solid rather than underlined, because the press
+   that follows is the one that cannot be taken back. */
+.btn-decline--armed {
+  background: var(--color-accent-2);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 8px 14px;
+}
+.btn-decline--armed:hover { background: var(--color-accent-2-deep); color: #fff; }
+.btn-decline:disabled,
+.btn-outline-accent:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* A tag that is on the row but turned off: students see neither the chip nor
+   the filter, and this is the only screen that says so. */
+.chip--off {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--ink-03);
+  color: var(--ink-55);
+  text-decoration: line-through;
+}
+.chip__mark {
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--color-accent-2-deep);
+}
+
+/* --- review screen: the custom tag catalogue ----------------------------- */
+
+.tagcat { padding: 30px 40px 80px; max-width: 68em; }
+.tagcat__note {
+  font-size: 16px;
+  color: var(--ink-65);
+  line-height: 1.5;
+  margin-bottom: 22px;
+  max-width: 44em;
+}
+.tagcat__row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--ink-10);
+}
+.tagcat__main { flex: 1 1 22em; min-width: 0; }
+.tagcat__name { font-size: 20px; display: block; overflow-wrap: anywhere; }
+.tagcat__uses { font-size: 15px; color: var(--ink-55); display: block; margin-top: 3px; }
+.tagcat__state {
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-accent-ink);
+  min-width: 9em;
+}
+.tagcat__state--off { color: var(--ink-50); }
+
 /* --- slideshow (projector) ---------------------------------------------- */
 
 .fx__body {
@@ -1576,7 +1726,10 @@ textarea.input { font-size: 17px; line-height: 1.5; resize: vertical; }
   .submit,
   .review { padding-left: 18px; padding-right: 18px; }
   .reviewnote,
+  .revtabs,
   .publish { margin-left: 18px; margin-right: 18px; }
+  .tagcat { padding-left: 18px; padding-right: 18px; }
+  .tagcat__state { min-width: 0; }
   .week__grid { grid-template-columns: minmax(0, 1fr); }
   .submit__times,
   .submit__who { grid-template-columns: minmax(0, 1fr); }

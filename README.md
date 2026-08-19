@@ -53,7 +53,7 @@ refuses everything, which is what it should do.
 | Event detail — flyer, tags, add-to-calendar, shareable link | click any event |
 | Submit an event — straight into the queue | **Submit an Event** in the header, or `#submit` |
 | Slideshow for lobby screens and lecture halls | **Slide Show**; arrows/space step, Esc exits |
-| Review queue (office only, behind a login) | **Review queue** in the page footer |
+| Review queue (office only, behind a login) — three tabs: what is waiting, what is already on the calendar, and the custom tags | **Review queue** in the page footer |
 
 The showcase above the grid cycles through whatever is currently in view, in the
 order it happens; clicking a row in the running order jumps to it. It holds still
@@ -174,6 +174,64 @@ leaves the address in place.
 the reviewer's own mail client; approving and declining tell the reviewer to
 contact the submitter themselves. Set `CONFIG.office.email` in
 `public/js/data.js` for the reply address.
+
+### Fixing what is already published
+
+The second tab, **On the calendar**. Until it existed an approval was final, and
+correcting one meant a `wrangler d1 execute` from somebody's laptop — which in
+practice meant asking whoever set this up, months later, and hoping they still
+had the credentials.
+
+Events are listed as **series** rather than one by one, because that is the unit
+a reviewer thinks in: one approval writes one event per occurrence of the repeat
+rule, and every one of those rows carries the submission it came from. A seeded
+placeholder has no submission behind it and is a series of one. The search box
+narrows the list by title, host or location.
+
+| | |
+| --- | --- |
+| **Move** a date | one occurrence goes to another day — the week it clashed with a holiday |
+| **Remove** a date | one occurrence comes off, the rest of the series untouched |
+| **It repeats too long** | keep the dates up to the one you choose, remove every date after it |
+| **Remove all** | the whole series goes |
+
+Every removal takes two presses: the first arms the button and makes it say what
+it is about to do, the second does it. **There is no undo** — the event rows are
+deleted. What survives is the submission: what was proposed, when, and which
+reviewer approved it, so "what happened to my event" still has an answer.
+
+Only shortening a series, never lengthening one. The dates were expanded once,
+from a repeat rule a person wrote and a reviewer read; adding to them here would
+be publishing events nobody submitted, so a longer run means a new submission.
+
+A date can only move to today or later. An event moved into the past is a typo
+every time, and a typo with teeth — the retention sweep deletes events older
+than the window without asking, so a slipped year would quietly take the event
+off the calendar some hours later.
+
+Removing the last event of a series leaves its uploaded flyer with nothing
+pointing at it, and the retention sweep frees the R2 object on its next run —
+one is started on the way out of a removal for exactly that reason.
+
+### Turning a custom tag off
+
+The third tab, **Custom tags**: every tag a submitter has invented and a
+reviewer has kept, with how many events carry it.
+
+Approving a submission decides this once, on a tag nobody has seen in use yet.
+This is the same decision taken again with the evidence in — a duplicate of a
+tag the calendar already had, a series name that stopped meaning anything, a
+typo waved through at half past four.
+
+**Turning one off takes it off the events, not just out of the filter bar.** The
+chip stops appearing on every event carrying it, which is the rule approving
+already follows: a tag a reviewer does not keep is dropped from the event rather
+than published unfilterable. Nothing is deleted — `/api/events` reads through
+the `approved` flag — so turning it back on puts it back everywhere it was.
+
+The filter bar's own chips (Mechanical, Workshop, and the rest) are not listed.
+They are the vocabulary in `js/data.js` that the `tags` table only mirrors, and
+turning one off would quietly empty a filter the calendar ships with.
 
 ## Where it is deployed
 
@@ -462,7 +520,10 @@ the event dialog, and puts a line above the grid saying so, worded from a live
 count: "every event on this calendar" while they all are, "23 events are
 placeholder data" as real ones arrive, and nothing once the last one goes.
 
-Approved events never carry the flag. To clear the placeholders:
+Approved events never carry the flag. The review screen's **On the calendar**
+tab lists them like anything else, marked as placeholders, and **Remove** takes
+them off one at a time — which is enough when a few are left. To clear the lot
+at once:
 
 ```bash
 npx wrangler d1 execute fye-calendar --remote --command="DELETE FROM event_tags WHERE event_id IN (SELECT id FROM events WHERE temporary = 1); DELETE FROM events WHERE temporary = 1;"
@@ -527,8 +588,9 @@ in the form spends that margin.
 
 **There is no cron, because Pages Functions have no scheduled handler** —
 `scheduled` is a Worker feature and this is a Pages project on purpose (see
-step 2 of "Deploying"). So the sweep rides on writes: submitting an event and
-approving one each start one, after their own response has gone back. At most
+step 2 of "Deploying"). So the sweep rides on writes: submitting an event,
+approving one and removing one each start one, after their own response has gone
+back. At most
 one real sweep runs every twelve hours however many submissions arrive, claimed
 through the `maintenance` table so two requests cannot both sweep. A calendar
 nobody is adding to is also a calendar nothing is accumulating in, which is why
@@ -537,7 +599,9 @@ that is sufficient rather than merely convenient.
 Three things it deliberately does not touch:
 
 - **A flyer with any surviving event.** A weekly series straddling the cutoff
-  keeps its artwork until the last occurrence ages out.
+  keeps its artwork until the last occurrence ages out — or until a reviewer
+  removes the last of them by hand, which is why removing an event starts a
+  sweep as well.
 - **A pending submission's flyer.** It is in the queue and its reviewer has to
   see it to decide.
 - **Anything decided or uploaded in the last day.** One grace period, used for
@@ -641,5 +705,6 @@ magick "public/favicon.ico[2]" -scale 320x320 /tmp/favicon-16.png
 The showcase ticks five times a second, so rendering is targeted rather than
 wholesale: the grid rebuilds only when the view, the anchor date or the filters
 change; the filter selects are built once and patched, so they keep focus; and
-the surfaces holding typed-in text — the submit form and the reviewer's feedback
-box — are built once and patched in place so nothing you typed is thrown away.
+the surfaces holding typed-in text — the submit form, the reviewer's feedback
+box, and the search box over the published events — are built once and patched in
+place so nothing you typed is thrown away.
