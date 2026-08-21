@@ -171,12 +171,31 @@ window.CalStore = (function () {
 
   /* Two kinds of artwork behind one call. A bundled key like "peru" is a file
      committed to the repo; anything else is an upload in R2, served from
-     /uploads. The rest of the app never has to know the difference. */
+     /uploads. The rest of the app never has to know the difference.
+
+     Three renderings come back, because one file cannot serve all three sizes.
+     A flyer is drawn at 154x96 in a card, at most of a projector screen on the
+     stage, and at its own full resolution when somebody opens the page. Handing
+     the card the original meant a week's grid pulled several megabytes to fill
+     six thumbnails, which is what made them sit blank on a slow connection.
+
+     `thumb` and `image` are derived key names, not stored ones: the renditions
+     are written beside the original at upload. When one is missing — an old
+     upload, or a browser whose canvas encode failed — /uploads serves the
+     original instead, so a derived name always resolves to something. */
   function flyer(key) {
     if (!key) return null;
-    if (C.FLYERS[key]) return C.FLYERS[key];
+
+    var bundled = C.FLYERS[key];
+    if (bundled) return { thumb: bundled.image, image: bundled.image, page: bundled.page };
+
     var url = "/uploads/" + key;
-    return { image: url, page: url };
+
+    /* Nothing can put a PDF in an <img>, so it has no raster rendering at all.
+       Callers check for that rather than sniffing the extension themselves. */
+    if (/\.pdf$/i.test(key)) return { thumb: null, image: null, page: url };
+
+    return { thumb: url + ".t.jpg", image: url + ".d.jpg", page: url };
   }
 
   function flyerOf(ev) { return flyer(ev && ev.flyer); }
@@ -216,14 +235,88 @@ window.CalStore = (function () {
      Writing — asynchronous, through the API
      ====================================================================== */
 
+  /* What the calendar draws a flyer into, at the two sizes that are not the
+     original. 308 is a 154px card thumbnail on a 2x screen; 1400 covers the
+     stage on a lecture-hall projector, where the flyer is meant to be read
+     from the back of the room. */
+  var THUMB_WIDTH = 308;
+  var DISPLAY_WIDTH = 1400;
+
   /* Uploads first and separately, so a 10 MB file is not re-sent every time a
      validation message sends the submitter back to the form. Resolves to the
-     key the submission then references. */
+     key the submission then references.
+
+     The two smaller renderings are made here, in the submitter's browser,
+     because a Worker has no image decoder to make them with. They ride along
+     with the original in the same request. */
   function uploadFlyer(file) {
-    var form = new FormData();
-    form.append("flyer", file);
-    return request("/api/flyers", { method: "POST", body: form })
-      .then(function (body) { return body.key; });
+    return renditions(file).then(function (small) {
+      var form = new FormData();
+      form.append("flyer", file);
+      if (small.thumb) form.append("thumb", small.thumb, "thumb.jpg");
+      if (small.display) form.append("display", small.display, "display.jpg");
+      return request("/api/flyers", { method: "POST", body: form })
+        .then(function (body) { return body.key; });
+    });
+  }
+
+  /* Both renderings, or as many as this browser and this file allow. A missing
+     rendition is an optimisation lost, never a submission refused — so every
+     failure here resolves empty rather than rejecting, and the flyer still
+     uploads whole. */
+  function renditions(file) {
+    if (!/^image\//i.test(file.type || "")) return Promise.resolve({});
+
+    return loadImage(file)
+      .then(function (img) {
+        return Promise.all([
+          scaled(img, THUMB_WIDTH, 0.82),
+          scaled(img, DISPLAY_WIDTH, 0.85)
+        ]);
+      })
+      .then(function (out) { return { thumb: out[0], display: out[1] }; })
+      .catch(function () { return {}; });
+  }
+
+  function loadImage(file) {
+    return new Promise(function (resolve, reject) {
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () { URL.revokeObjectURL(url); resolve(img); };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error("undecodable")); };
+      img.src = url;
+    });
+  }
+
+  /* Null when the original is already no wider than the target: re-encoding it
+     would spend bytes to gain nothing, and /uploads falls back to the original
+     for a rendition that was never written. */
+  function scaled(img, width, quality) {
+    var w = img.naturalWidth, h = img.naturalHeight;
+    if (!w || !h || w <= width) return Promise.resolve(null);
+
+    var canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = Math.max(1, Math.round(h * width / w));
+
+    var ctx = canvas.getContext("2d");
+    if (!ctx) return Promise.resolve(null);
+    ctx.imageSmoothingQuality = "high";
+    /* JPEG carries no alpha, and an unpainted canvas is transparent black — a
+       flyer with a transparent ground would come out on black without this. */
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+    return new Promise(function (resolve) {
+      if (!canvas.toBlob) return resolve(null);
+      canvas.toBlob(function (blob) {
+        /* toBlob falls back to PNG when a type is not supported, which for a
+           full-size flyer is larger than what we started with. Take JPEG or
+           take nothing. */
+        resolve(blob && blob.type === "image/jpeg" ? blob : null);
+      }, "image/jpeg", quality);
+    });
   }
 
   function submit(draft) {

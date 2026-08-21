@@ -286,21 +286,33 @@
 
   /* Three ways an event's flyer can appear: the artwork itself, a small
      cover-cropped thumbnail, and — for an event with no flyer yet — a set
-     page built from the event's own text so the stage never goes blank. */
+     page built from the event's own text so the stage never goes blank.
+
+     The first two take different files. A card is 154x96 and the stage is most
+     of a projector, so `thumb` is a 308px rendering and `image` a 1400px one;
+     handing the card the full-resolution original is what left a week of
+     thumbnails blank while several megabytes arrived. */
   function flyerNode(ev, mode) {
     var flyer = S.flyerOf(ev);
+    var src = flyer && (mode === "thumb" ? flyer.thumb : flyer.image);
 
-    if (flyer) {
+    if (src) {
       return el("img", {
         class: "flyer flyer--" + mode,
-        src: flyer.image,
+        src: src,
         alt: ev.title + " flyer",
-        loading: mode === "thumb" ? "lazy" : null
+        loading: mode === "thumb" ? "lazy" : null,
+        /* Six cards decode off the critical path rather than in it. */
+        decoding: "async"
       });
     }
 
+    /* There is a flyer, but it is a PDF and nothing can draw it here. Saying so
+       is the point: "to come" would be wrong, and the artwork is one click away
+       on the flyer page. */
     if (mode !== "stage") {
-      return el("span", { class: "flyer-placeholder" }, el("span", { text: "Flyer to come" }));
+      return el("span", { class: "flyer-placeholder" },
+        el("span", { text: flyer ? "Flyer is a PDF" : "Flyer to come" }));
     }
 
     return el("div", { class: "flyer-set" }, [
@@ -308,7 +320,11 @@
       el("div", { class: "flyer-set__title", text: ev.title }),
       el("div", { class: "flyer-set__meta", text: ev.time + " · " + ev.place }),
       el("div", { class: "flyer-set__blurb", text: ev.blurb }),
-      el("div", { class: "flyer-set__note", text: "Flyer page not yet submitted" })
+      el("div", {
+        class: "flyer-set__note",
+        text: flyer ? "Flyer is a PDF — open the flyer page to read it"
+                    : "Flyer page not yet submitted"
+      })
     ]);
   }
 
@@ -1889,8 +1905,10 @@
   }
 
   /* The artwork itself, not a stand-in: it is uploaded and served before
-     anyone reviews it, so the reviewer sees what students would. A PDF has no
-     thumbnail in an <img>, so the hatched sheet still covers that case.
+     anyone reviews it, so the reviewer sees what students would — the same
+     rendering, at the same size, which is the point of a proof. A PDF has no
+     thumbnail in an <img>, so the hatched sheet still covers that case, and
+     `flyer()` is what knows which flyers those are.
 
      Resolved through the store rather than straight off /uploads, because the
      published tab shows seeded events too and their artwork is a file in the
@@ -1905,7 +1923,7 @@
       target: "_blank",
       rel: "noopener"
     }, [
-      /\.pdf$/i.test(art.image)
+      !art.image
         ? el("div", { class: "flyerproof__sheet" })
         : el("img", {
             class: "flyerproof__image",

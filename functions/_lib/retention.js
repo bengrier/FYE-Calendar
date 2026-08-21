@@ -48,6 +48,21 @@
    it would do nothing, but the point is to never reach for it at all. */
 var UPLOAD_KEY = /^f-[A-Za-z0-9._-]{6,120}$/;
 
+/* An upload is three objects, not one: the flyer, and the two smaller
+   renderings api/flyers.js writes beside it under a derived name. Only the
+   original is ever named in the database, so everything here that frees a
+   flyer has to free its renditions in the same breath — and, just as
+   important, must not mistake a rendition for an upload nobody claimed. */
+var RENDITION = /\.(t|d)\.jpg$/;
+
+function withRenditions(keys) {
+  var all = [];
+  keys.forEach(function (key) {
+    all.push(key, key + ".t.jpg", key + ".d.jpg");
+  });
+  return all;
+}
+
 /* At most one real sweep per this much elapsed time, however many writes come
    in. Retention measured in months does not care about a day of lag, and the
    alternative is every submission paying for a delete scan. */
@@ -78,7 +93,13 @@ var ORPHAN_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 /* Bounds on the bucket walk. Keys are `f-<base36 time>-<random>`, so they list
    in roughly the order they were uploaded and the oldest — the ones most likely
    to be orphaned — come first. A bucket bigger than this is examined from the
-   front each sweep, which is the right end to look at. */
+   front each sweep, which is the right end to look at.
+
+   This counts objects, and an upload is three of them: a rendition sorts
+   directly beside the flyer it was made from, so the ordering above still
+   holds, but the budget now reaches roughly a third as far in uploads. That is
+   still some sixteen hundred of them per sweep, against a calendar that has
+   taken six in a semester. */
 var MAX_KEYS_EXAMINED = 5000;
 var LIST_PAGE = 1000;
 
@@ -278,7 +299,7 @@ async function sweepFlyers(env, now) {
      database that could name it. This way a failure between the two leaves a
      submission naming a file that is gone, which costs a dead string in a row
      nobody reads after the decision. */
-  if (env.FLYERS) await env.FLYERS.delete(candidates);
+  if (env.FLYERS) await env.FLYERS.delete(withRenditions(candidates));
 
   await db.batch(
     candidates.map(function (key) {
@@ -332,13 +353,20 @@ async function sweepOrphanUploads(env, now) {
       /* `uploaded` is R2's own record of when it took the bytes, not anything a
          caller supplied, which is what makes an age threshold worth having. */
       if (!object.uploaded || object.uploaded.getTime() >= cutoff) return;
+      /* Renditions are skipped rather than asked about. Nothing in the database
+         ever names one, so asking would call every rendition of every published
+         flyer an orphan and delete the lot. They are freed with the original
+         instead — below, and in sweepFlyers. */
+      if (RENDITION.test(object.key)) return;
       aged.push(object.key);
     });
 
     var orphans = await unclaimed(env.DB, aged);
 
     if (orphans.length) {
-      await env.FLYERS.delete(orphans);
+      /* Deleting names R2 has nothing under is not an error, so this does not
+         need to know which of the two renditions were actually written. */
+      await env.FLYERS.delete(withRenditions(orphans));
       deleted += orphans.length;
     }
 

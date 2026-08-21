@@ -14,6 +14,11 @@ import { json, fail, methodNotAllowed, uid } from "../_lib/http.js";
 
 var MAX_BYTES = 10 * 1024 * 1024;
 
+/* A rendition of a 10 MB flyer is a couple of hundred kilobytes. This is
+   room to be wrong by an order of magnitude and still refuse anything that
+   is not what it claims to be. */
+var MAX_RENDITION_BYTES = 2 * 1024 * 1024;
+
 /* Deliberately a list of what is allowed rather than of what is not: the
    projector and the calendar have to render this, so anything not on here is no
    use even when it is harmless. */
@@ -78,7 +83,38 @@ export async function onRequest(context) {
     }
   });
 
+  /* The two smaller renderings, if the browser managed to make them. They are
+     stored beside the original under a derived name, which is how the calendar
+     addresses them without the database having to carry three keys per flyer.
+
+     Optional on purpose: a PDF has none, an old browser may have none, and a
+     flyer that arrives alone still works — /uploads serves the original for a
+     rendition that is not there. */
+  await Promise.all([
+    putRendition(context, key + ".t.jpg", form.get("thumb")),
+    putRendition(context, key + ".d.jpg", form.get("display"))
+  ]);
+
   return json({ key: key }, { status: 201 });
+}
+
+/* A rendition is checked exactly as strictly as the original was. It arrives
+   from the same untrusted place, and "it is only the thumbnail" is precisely
+   the argument that would let something unchecked into the bucket. */
+async function putRendition(context, key, file) {
+  if (!file || typeof file === "string") return;
+  if (file.size === 0 || file.size > MAX_RENDITION_BYTES) return;
+  if (String(file.type || "").toLowerCase() !== "image/jpeg") return;
+
+  var bytes = new Uint8Array(await file.arrayBuffer());
+  if (sniff(bytes) !== "jpg") return;
+
+  await context.env.FLYERS.put(key, bytes, {
+    httpMetadata: {
+      contentType: "image/jpeg",
+      cacheControl: "public, max-age=31536000, immutable"
+    }
+  });
 }
 
 function sniff(bytes) {

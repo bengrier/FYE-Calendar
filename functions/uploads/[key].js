@@ -7,6 +7,9 @@
 
 var KEY = /^f-[A-Za-z0-9._-]{6,120}$/;
 
+/* The suffixes api/flyers.js writes the two smaller renderings under. */
+var RENDITION = /\.(t|d)\.jpg$/;
+
 export async function onRequest(context) {
   if (context.request.method !== "GET" && context.request.method !== "HEAD") {
     return new Response("Method not allowed.", {
@@ -22,6 +25,16 @@ export async function onRequest(context) {
   if (!KEY.test(key)) return new Response("Not found.", { status: 404 });
 
   var object = await context.env.FLYERS.get(key);
+
+  /* A rendition that was never written falls back to the flyer it would have
+     been made from. That is what lets the calendar name a thumbnail without
+     knowing whether one exists: uploads from before renditions, PDFs, and
+     browsers whose canvas encode failed all still put artwork on the page —
+     the heavy original rather than a light copy, but never a broken image. */
+  if (!object && RENDITION.test(key)) {
+    object = await context.env.FLYERS.get(key.replace(RENDITION, ""));
+  }
+
   if (!object) return new Response("Not found.", { status: 404 });
 
   var headers = new Headers();
