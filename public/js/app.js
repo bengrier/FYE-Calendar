@@ -1693,12 +1693,6 @@
 
   function csuHeader(title, titleClass, actions) {
     return el("header", { class: "csu-header" }, [
-      el("div", { class: "csu-header__top" },
-        el("div", { class: "csu-header__brand" }, [
-          el("span", { class: "csu-header__sig" },
-            el("img", { src: "assets/csu/sig-stack.svg", alt: "Colorado State University" })),
-          el("div", { class: "csu-header__unit", text: "Walter Scott, Jr. College of Engineering" })
-        ])),
       el("div", { class: "csu-header__bar" }, [
         el("h2", { class: "csu-header__title " + titleClass, text: title }),
         actions
@@ -2871,12 +2865,6 @@
 
     slideshowNode = el("div", { class: "overlay overlay--fx" }, [
       el("header", { class: "csu-header" }, [
-        el("div", { class: "csu-header__top" },
-          el("div", { class: "csu-header__brand" }, [
-            el("span", { class: "csu-header__sig" },
-              el("img", { src: "assets/csu/sig-stack.svg", alt: "Colorado State University" })),
-            el("div", { class: "csu-header__unit", text: "Walter Scott, Jr. College of Engineering" })
-          ])),
         el("div", { class: "csu-header__bar" }, [
           el("h2", { class: "csu-header__title csu-header__title--fx", text: "This week in the Engineering Community" }),
           el("div", { class: "csu-header__actions csu-header__actions--fx" }, [
