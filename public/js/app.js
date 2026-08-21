@@ -1017,39 +1017,10 @@
      Event detail
      ====================================================================== */
 
-  /* The link that identifies this event anywhere — what Copy link puts on the
-     clipboard and what a shared URL resolves back to. */
-  function linkTo(ev) {
-    return location.origin === "null" || location.protocol === "file:"
-      ? location.href.split("#")[0] + "#event/" + encodeURIComponent(ev.id)
-      : location.origin + location.pathname + location.search +
-        "#event/" + encodeURIComponent(ev.id);
-  }
-
-  /* Clipboard access is refused on insecure origins and in some embedded
-     browsers, so every path here ends with the text somewhere the person can
-     select it by hand rather than with nothing having happened. */
-  function copy(text, onDone) {
-    var failed = function () { window.prompt("Copy this", text); };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(onDone, failed);
-    } else {
-      failed();
-    }
-  }
-
-  function copyLink(ev) {
-    copy(linkTo(ev), function () { toast("Link copied"); });
-  }
-
-  /* Confirmation on the button itself, for the overlays — the toast lives on
-     the calendar behind them and would go unseen. */
-  function copyText(text, button, label) {
-    copy(text, function () {
-      button.textContent = "Copied";
-      window.setTimeout(function () { button.textContent = label; }, 1600);
-    });
-  }
+  /* Nothing here copies a link any more. An open dialog puts
+     #event/<id> in the address bar — see `syncHash` — so the shareable link is
+     already where a browser's own share and copy live, and a button that
+     duplicated it was one more thing to read past. */
 
   function detailOverlay(ev) {
     var flyer = S.flyerOf(ev);
@@ -1064,13 +1035,29 @@
       tabindex: "-1",
       onClick: function (e) { e.stopPropagation(); }
     }, [
-      el("div", { class: "modal__flyer" }, flyerNode(ev, "stage")),
+      el("div", { class: "modal__flyer" },
+        /* The artwork is the thing people reach for, so the artwork is the
+           link, and it is the only way to the flyer page — there is no button
+           for it any more. A PDF flyer has no artwork and draws here as a set
+           page built from the event's own text; that set page is inside this
+           same anchor, and the CSS underlines its note so the type does not
+           read as inert. */
+        flyer && flyer.page
+          ? el("a", {
+              class: "modal__flyerlink",
+              href: flyer.page,
+              target: "_blank",
+              rel: "noopener",
+              title: "Open the flyer page",
+              "aria-label": "Open the flyer page for " + ev.title
+            }, flyerNode(ev, "stage"))
+          : flyerNode(ev, "stage")),
       el("div", { class: "modal__info" }, [
         el("div", { class: "modal__topline" }, [
           el("div", { class: "kicker", text: ev.org }),
           /* Orthogonal to past/today, and stated where someone is closest to
-             acting on the event — this is the dialog with "Add to calendar"
-             in it. */
+             acting on the event — this is the dialog with the calendar
+             download in it. */
           ev.temporary
             ? el("span", { class: "badge badge--sample", text: "Sample event" })
             : null,
@@ -1090,22 +1077,13 @@
         })),
         el("div", { class: "modal__actions" }, [
           el("button", {
-            type: "button", class: "btn-primary", text: "Add to calendar",
+            /* Leads with what the student wants to do; the extension is there
+               for whoever needs it, and the toast after the click is what says
+               a file arrived. */
+            type: "button", class: "btn-primary", text: "Add to my calendar (.ics)",
             onClick: function () {
               if (ICS.download([ev], ev.title)) toast("Calendar file downloaded");
             }
-          }),
-          /* Only offered when there is a page to open. */
-          flyer ? el("a", {
-            class: "btn-secondary btn-secondary--link",
-            href: flyer.page,
-            target: "_blank",
-            rel: "noopener",
-            text: "Open the flyer page"
-          }) : null,
-          el("button", {
-            type: "button", class: "btn-secondary", text: "Copy link",
-            onClick: function () { copyLink(ev); }
           }),
           el("button", { type: "button", class: "btn-secondary", onClick: closeDetail, text: "Close" })
         ]),

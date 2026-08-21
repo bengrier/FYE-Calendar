@@ -25,8 +25,8 @@ window.CalData = (function () {
   };
 
   /* Artwork committed to the repo, served as static files from public/flyers.
-     `image` is what the calendar renders; `page` is what "Open the flyer page"
-     links to — the original PDF where there is one.
+     `image` is what the calendar renders; `page` is where clicking the flyer on
+     the stage goes — the original PDF where there is one.
 
      Flyers uploaded through the submit form are not in here: they live in R2
      and are served from /uploads, which `flyer()` in js/store.js resolves. */

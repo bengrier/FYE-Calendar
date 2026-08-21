@@ -966,6 +966,33 @@ textarea:focus-visible,
   min-height: 0;
   overflow: hidden;
 }
+
+/* The flyer itself is the link to the flyer page, so the anchor has to fill
+   the stage rather than shrink-wrap the image inside it. */
+.modal__flyerlink {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  cursor: pointer;
+  transition: opacity 140ms ease-out;
+}
+.modal__flyerlink:hover { opacity: 0.88; }
+/* A PDF flyer draws as a set page rather than artwork. On the stage that page
+   is a link, so its note takes the one bit of underline that says so — the same
+   set page in the showcase is not a link and stays plain. */
+.modal__flyerlink .flyer-set__note {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.modal__flyerlink:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 3px;
+}
+
 .modal__info {
   padding: 34px 34px 30px;
   overflow: auto;
@@ -992,16 +1019,6 @@ textarea:focus-visible,
   padding-top: 18px;
   border-top: 1px solid var(--ink-12);
 }
-
-/* An anchor styled as a secondary button, so "Open the flyer page" sits level
-   with the buttons beside it instead of riding high on its own line-height. */
-.btn-secondary--link {
-  display: inline-flex;
-  align-items: center;
-  color: var(--color-text);
-  text-decoration: none;
-}
-.btn-secondary--link:hover { color: var(--color-text); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 7px; margin: 24px 0 0; }
 .chip {
