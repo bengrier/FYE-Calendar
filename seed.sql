@@ -17,6 +17,12 @@ DELETE FROM tags;
 
 
 -- The filter bar's fixed chips (mirrors GROUPS in js/data.js).
+--
+-- Not every chip in GROUPS belongs here. "Repeating" and "One-off" are a
+-- question the calendar answers by counting the rows a series was published
+-- as, not words anybody writes on an event -- their group carries `matches`
+-- in js/data.js and stops there. A row for one of them would make the server
+-- treat it as a tag a submitter could pick.
 INSERT INTO tags (name, kind, approved) VALUES ('All disciplines', 'fixed', 1);
 INSERT INTO tags (name, kind, approved) VALUES ('Mechanical', 'fixed', 1);
 INSERT INTO tags (name, kind, approved) VALUES ('Electrical', 'fixed', 1);

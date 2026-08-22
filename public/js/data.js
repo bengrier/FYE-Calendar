@@ -45,12 +45,35 @@ window.CalData = (function () {
      server can tell a tag someone picked off a list from one they invented.
      Change them here and re-run seed.sql, or the two will disagree about what
      counts as a new tag. The custom group is filled from the database at
-     runtime and is empty here on purpose. */
+     runtime and is empty here on purpose.
+
+     A group carrying `matches` is the exception to all of that: its chips are
+     not tags, it is not mirrored into the `tags` table, and it answers a filter
+     by looking at the event rather than by the event carrying a word. */
   var GROUPS = [
     { key: "discipline", any: "Any discipline", openToAll: true, chips: ["Mechanical", "Electrical", "Civil", "Software", "Chemical"] },
     { key: "type", any: "Any event type", chips: ["Club", "Industry night", "Workshop", "Social"] },
     { key: "perks", any: "Any perks", chips: ["Free food"] },
     { key: "time", any: "Any time of day", chips: ["Morning", "Afternoon", "Evening"] },
+
+    /* Whether the event stands on its own or is one date of several — the
+       weekly club meeting a student wants to settle into, or the one-off
+       industry night they have to catch.
+
+       Nobody writes this on an event and nobody should have to. Approving a
+       repeating submission writes one row per occurrence, so the calendar
+       already knows which dates have siblings; /api/events sends that back as
+       `repeats`. A tag would be the same fact written a second time by hand,
+       and the two would drift the first time a reviewer trimmed a series. */
+    {
+      key: "repeats",
+      any: "One-off and repeating",
+      chips: ["Repeating", "One-off"],
+      matches: function (ev, chosen) {
+        return chosen === "Repeating" ? !!ev.repeats : !ev.repeats;
+      }
+    },
+
     { key: "custom", any: "Custom tags", chips: [] }
   ];
 

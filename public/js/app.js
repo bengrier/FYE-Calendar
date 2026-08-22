@@ -185,12 +185,14 @@
   }
 
   /* An event survives a filter group if it carries the chosen tag — or, for
-     the discipline group, if it is open to all disciplines. */
+     the discipline group, if it is open to all disciplines. A group with its
+     own `matches` is not asking about tags at all and answers for itself. */
   function matchesFilters(ev) {
     var tags = S.allTags(ev);
     return C.GROUPS.every(function (g) {
       var chosen = state.selected[g.key];
       if (!chosen) return true;
+      if (g.matches) return g.matches(ev, chosen);
       if (tags.indexOf(chosen) > -1) return true;
       return !!g.openToAll && tags.indexOf("All disciplines") > -1;
     });
@@ -1617,8 +1619,13 @@
           el("div", { class: "group__selects" }, C.GROUPS
             /* Custom tags have their own section below. Time of day is not
                offered at all: it is derived from the start time, so letting
-               someone tag a 6pm event "Morning" would only ever be wrong. */
-            .filter(function (g) { return g.key !== "custom" && g.key !== "time"; })
+               someone tag a 6pm event "Morning" would only ever be wrong. Nor
+               is a group that answers filters for itself — whether an event
+               repeats is the Repeats field further down this same form, and
+               asking it twice is asking to be told two different things. */
+            .filter(function (g) {
+              return g.key !== "custom" && g.key !== "time" && !g.matches;
+            })
             .map(function (g) {
               var select = selectOf(submitOptions(g), {
                 class: "select select--tag",

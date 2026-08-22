@@ -15,8 +15,8 @@ export async function onRequest(context) {
 
   var results = await db.batch([
     db.prepare(
-      "SELECT id, date, start, time, title, org, place, blurb, flyer_key, temporary " +
-      "FROM events ORDER BY date, start"
+      "SELECT id, date, start, time, title, org, place, blurb, flyer_key, temporary, " +
+      "from_submission FROM events ORDER BY date, start"
     ),
     /* Through the `approved` flag, not around it. A custom tag the office has
        turned off in the review screen stops appearing on the event as well as
@@ -29,8 +29,28 @@ export async function onRequest(context) {
       "LEFT JOIN tags t ON t.name = et.tag " +
       "WHERE t.name IS NULL OR t.approved = 1"
     ),
-    db.prepare("SELECT name FROM tags WHERE approved = 1 AND kind = 'custom' ORDER BY name")
+    db.prepare("SELECT name FROM tags WHERE approved = 1 AND kind = 'custom' ORDER BY name"),
+    /* Which events are one date of several. One approval writes one row per
+       occurrence and ties them together with `from_submission`, so a series is
+       a group of rows and nothing else — there is no column on an event saying
+       it repeats, and this is the question that answers instead.
+
+       Counted rather than read off the submission's repeat rule, because the
+       rule is what was approved and the rows are what is on the calendar. A
+       reviewer who trims a weekly series back to its first date leaves one
+       event behind, and one event does not repeat however it was published.
+
+       Only the id list comes back, not a flag per event: the submission id is
+       the thread through somebody's submission, and the calendar only needs to
+       know that a date has siblings, not which submission it came from. */
+    db.prepare(
+      "SELECT from_submission FROM events WHERE from_submission IS NOT NULL " +
+      "GROUP BY from_submission HAVING COUNT(*) > 1"
+    )
   ]);
+
+  var repeating = {};
+  results[3].results.forEach(function (row) { repeating[row.from_submission] = true; });
 
   var tagsByEvent = {};
   results[1].results.forEach(function (row) {
@@ -49,6 +69,7 @@ export async function onRequest(context) {
       blurb: row.blurb,
       flyer: row.flyer_key,
       temporary: !!row.temporary,
+      repeats: !!repeating[row.from_submission],
       tags: tagsByEvent[row.id] || []
     };
   });
