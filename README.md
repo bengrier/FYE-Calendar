@@ -96,9 +96,15 @@ split is the point of the directory: with the repo root as the output,
 - `public/js/dates.js` — Monday-first, whole-day, local-time date helpers.
 - `public/js/ics.js` — iCalendar export.
 - `public/js/app.js` — state, derived views, and targeted rendering.
+- `public/js/pdf-bridge.mjs` — the first page of an uploaded PDF, drawn onto a
+  canvas so the calendar has something it can display. The only file that knows
+  pdf.js exists, and the only ES module here: everything else is a classic
+  script and stays one. Loaded on demand, never on the calendar itself.
 - `public/css/app.css` — Broadsheet tokens, CSU header, calendar components.
 - `public/flyers/` — artwork committed to the repo. Uploaded flyers are not here;
   they live in R2 and are served from `/uploads`.
+- `public/vendor/pdfjs/` — Mozilla's pdf.js, vendored. See the README in that
+  directory for what was taken and how to update it.
 - `public/favicon.svg` — the tab icon, and the source for the two rasters beside
   it. See [The tab icon](#the-tab-icon).
 - `functions/api/` — the API. `functions/api/admin/` is behind Cloudflare Access.
@@ -115,6 +121,36 @@ office's queue. No email, no link to copy, no account to create.
 Two requests rather than one. The flyer goes to `POST /api/flyers` first and
 comes back as a key the submission then references, so a 10 MB file is not
 re-sent because a validation message bounced someone back to the form.
+
+### What a flyer key says
+
+`POST /api/flyers` stores three objects, not one: the flyer as it was uploaded,
+and two smaller JPEGs made in the submitter's browser — a 308px card thumbnail
+and a 1400px copy for the stage. They are stored beside the original under
+derived names (`<key>.t.jpg`, `<key>.d.jpg`), so the database carries one key
+per flyer rather than three.
+
+A PDF gets the same treatment, by rasterising its first page with pdf.js before
+those two JPEGs are made. It is the one upload that cannot fall back on its
+original when that fails, though — nothing can put a PDF in an `<img>` — so its
+key records whether it worked:
+
+| Key | What the calendar does |
+| --- | --- |
+| `f-….png`, `.jpg`, `.webp`, `.gif` | draws the renditions, or the original if a rendition is missing |
+| `f-….r.pdf` | draws the rendering of page 1; the PDF itself is the flyer page |
+| `f-….pdf` | draws nothing, and says "Flyer is a PDF" with a link to the page |
+
+The last row is what every PDF looked like before pdf.js was wired in, and what
+one still looks like when a browser cannot rasterise it — an old browser, or a
+PDF needing something that was deliberately not vendored. It is a fallback, not
+a failure: the flyer is still on the site, still linked, still reviewable.
+
+`.r.pdf` is issued only after both renditions are actually written to R2, and
+`store.js` `flyer()` trusts that name months later without going to look, so
+the two have to stay in step. `/uploads` will not serve a PDF in place of a
+missing rendition, which is what stops a broken image from turning into ten
+megabytes of somebody's phone data.
 
 **The server re-checks everything the form checked.** The client-side checks
 exist to tell someone what is wrong while they are still looking at the field;

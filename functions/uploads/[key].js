@@ -28,11 +28,21 @@ export async function onRequest(context) {
 
   /* A rendition that was never written falls back to the flyer it would have
      been made from. That is what lets the calendar name a thumbnail without
-     knowing whether one exists: uploads from before renditions, PDFs, and
-     browsers whose canvas encode failed all still put artwork on the page —
-     the heavy original rather than a light copy, but never a broken image. */
+     knowing whether one exists: uploads from before renditions, and browsers
+     whose canvas encode failed, still put artwork on the page — the heavy
+     original rather than a light copy, but never a broken image. */
   if (!object && RENDITION.test(key)) {
-    object = await context.env.FLYERS.get(key.replace(RENDITION, ""));
+    var original = key.replace(RENDITION, "");
+
+    /* Never a PDF, though. The fallback exists so that an <img> gets a picture
+       instead of nothing, and PDF bytes in an <img> are not a picture — they
+       are a broken image and several megabytes of somebody's phone data spent
+       to produce it. A rendition of a PDF is asked for only when the key says
+       the PDF was rasterised at upload, so reaching here means that rendering
+       has gone missing, and 404 is the honest answer. */
+    if (!/\.pdf$/i.test(original)) {
+      object = await context.env.FLYERS.get(original);
+    }
   }
 
   if (!object) return new Response("Not found.", { status: 404 });

@@ -182,7 +182,8 @@ window.CalStore = (function () {
      `thumb` and `image` are derived key names, not stored ones: the renditions
      are written beside the original at upload. When one is missing — an old
      upload, or a browser whose canvas encode failed — /uploads serves the
-     original instead, so a derived name always resolves to something. */
+     original instead, so a derived name always resolves to something. The one
+     exception is the one original that is not an image: see below. */
   function flyer(key) {
     if (!key) return null;
 
@@ -191,9 +192,19 @@ window.CalStore = (function () {
 
     var url = "/uploads/" + key;
 
-    /* Nothing can put a PDF in an <img>, so it has no raster rendering at all.
-       Callers check for that rather than sniffing the extension themselves. */
-    if (/\.pdf$/i.test(key)) return { thumb: null, image: null, page: url };
+    /* Nothing can put a PDF in an <img>. What it can have is a picture of its
+       first page, taken in the submitter's browser at upload — and the key
+       says whether it got one: `.r.pdf` was rasterised, plain `.pdf` was not,
+       because the browser was too old or the file too strange. Only the second
+       has nothing to draw.
+
+       The distinction is in the key rather than in the database because this
+       function is synchronous and holds nothing else. api/flyers.js decides
+       which name to issue, and only ever issues `.r.pdf` once both renditions
+       are safely written. */
+    if (/\.pdf$/i.test(key) && !/\.r\.pdf$/i.test(key)) {
+      return { thumb: null, image: null, page: url };
+    }
 
     return { thumb: url + ".t.jpg", image: url + ".d.jpg", page: url };
   }
@@ -265,7 +276,10 @@ window.CalStore = (function () {
      failure here resolves empty rather than rejecting, and the flyer still
      uploads whole. */
   function renditions(file) {
-    if (!/^image\//i.test(file.type || "")) return Promise.resolve({});
+    var type = String(file.type || "").toLowerCase();
+
+    if (type === "application/pdf") return pdfRenditions(file);
+    if (!/^image\//i.test(type)) return Promise.resolve({});
 
     return loadImage(file)
       .then(function (img) {
@@ -288,11 +302,75 @@ window.CalStore = (function () {
     });
   }
 
+  /* The same two renderings, made from a PDF instead of an image.
+
+     A PDF is the one upload that cannot fall back on its original: an <img>
+     can display a JPEG that was never resized, but nothing can display a PDF.
+     So this is not the optimisation the image path is — it is the whole
+     difference between a flyer that appears on the calendar and a flyer that
+     is a line of text and a link.
+
+     Which is also why both renderings have to arrive or neither counts. A pair
+     with a hole in it would leave some other page reaching for a rendition
+     that is not there, and the thing behind it is a PDF. */
+  function pdfRenditions(file) {
+    return loadPdf()
+      .then(function (pdf) { return pdf.firstPage(file, DISPLAY_WIDTH); })
+      .then(function (canvas) {
+        return Promise.all([
+          scaled(canvas, THUMB_WIDTH, 0.82),
+          /* Encoded, not scaled: the page was rendered at DISPLAY_WIDTH
+             already, and `scaled` would decline to widen what is that wide. */
+          encode(canvas, 0.85)
+        ]);
+      })
+      .then(function (out) {
+        return out[0] && out[1] ? { thumb: out[0], display: out[1] } : {};
+      })
+      .catch(function () { return {}; });
+  }
+
+  /* pdf.js, fetched the first time somebody attaches a PDF and not before.
+
+     It is reached through a module because that is the only way to load it,
+     and through an injected <script> rather than `import()` because this file
+     has to keep parsing on browsers that have never heard of either. A browser
+     with no module support ignores `type="module"` silently — no load event,
+     no error event, nothing to wait for — so it is asked first rather than
+     waited on. */
+  var pdfLoad = null;
+
+  function loadPdf() {
+    if (pdfLoad) return pdfLoad;
+
+    pdfLoad = new Promise(function (resolve, reject) {
+      var script = document.createElement("script");
+      if (!("noModule" in script)) throw new Error("no module support");
+
+      script.type = "module";
+      script.src = "js/pdf-bridge.mjs";
+      script.onload = function () {
+        window.CalPdf ? resolve(window.CalPdf) : reject(new Error("pdf.js did not load"));
+      };
+      script.onerror = function () { reject(new Error("pdf.js did not load")); };
+      document.head.appendChild(script);
+    });
+
+    /* A failure is this attempt's, not this browser's: a submitter who lost
+       the network mid-upload and tries again gets a fresh attempt rather than
+       a permanent no. */
+    pdfLoad.catch(function () { pdfLoad = null; });
+    return pdfLoad;
+  }
+
   /* Null when the original is already no wider than the target: re-encoding it
      would spend bytes to gain nothing, and /uploads falls back to the original
      for a rendition that was never written. */
-  function scaled(img, width, quality) {
-    var w = img.naturalWidth, h = img.naturalHeight;
+  function scaled(source, width, quality) {
+    /* An <img> carries its true size on `naturalWidth`, where `width` means
+       something else; a canvas from the PDF path has only `width`. */
+    var w = source.naturalWidth || source.width;
+    var h = source.naturalHeight || source.height;
     if (!w || !h || w <= width) return Promise.resolve(null);
 
     var canvas = document.createElement("canvas");
@@ -306,8 +384,14 @@ window.CalStore = (function () {
        flyer with a transparent ground would come out on black without this. */
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
 
+    return encode(canvas, quality);
+  }
+
+  /* Separate from `scaled` because the PDF path arrives holding a canvas that
+     is already the right size and has nothing left to scale. */
+  function encode(canvas, quality) {
     return new Promise(function (resolve) {
       if (!canvas.toBlob) return resolve(null);
       canvas.toBlob(function (blob) {

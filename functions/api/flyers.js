@@ -72,7 +72,23 @@ export async function onRequest(context) {
     return fail(415, "That file is not a readable PDF or image.");
   }
 
-  var key = uid("f") + "." + actual;
+  /* Read and check the two smaller renderings before naming anything, because
+     for a PDF the name depends on whether they are real. */
+  var thumb = await rendition(form.get("thumb"));
+  var display = await rendition(form.get("display"));
+
+  /* An image is drawable whatever else arrived — the original is a picture and
+     /uploads will serve it. A PDF is drawable only through the rendering of
+     its first page that the submitter's browser made, so it is drawable only
+     if that rendering, and its thumbnail, both got here.
+
+     The key carries that fact, spelled `.r.pdf`, for one reason: months later
+     the calendar has to paint a card holding nothing but this string, from a
+     synchronous function, with no chance to go and look. Everything that reads
+     it — store.js `flyer()` — trusts the name, so the name is only issued
+     below, after both objects are actually written. */
+  var rasterised = actual === "pdf" && thumb && display;
+  var key = uid("f") + "." + (rasterised ? "r.pdf" : actual);
 
   await context.env.FLYERS.put(key, bytes, {
     httpMetadata: {
@@ -87,27 +103,39 @@ export async function onRequest(context) {
      stored beside the original under a derived name, which is how the calendar
      addresses them without the database having to carry three keys per flyer.
 
-     Optional on purpose: a PDF has none, an old browser may have none, and a
-     flyer that arrives alone still works — /uploads serves the original for a
-     rendition that is not there. */
+     Still optional: an old browser may have none, a PDF this browser could not
+     rasterise has none, and a flyer that arrives alone works — /uploads serves
+     the original for a rendition that is not there. What has changed is what
+     "works" means for a PDF, which is why the key was named above. */
   await Promise.all([
-    putRendition(context, key + ".t.jpg", form.get("thumb")),
-    putRendition(context, key + ".d.jpg", form.get("display"))
+    putRendition(context, key + ".t.jpg", thumb),
+    putRendition(context, key + ".d.jpg", display)
   ]);
 
+  /* Returned only now. A rendition that failed to write throws out of the
+     await above and the submitter is never handed a key claiming a rendering
+     that is not in the bucket. */
   return json({ key: key }, { status: 201 });
 }
 
 /* A rendition is checked exactly as strictly as the original was. It arrives
    from the same untrusted place, and "it is only the thumbnail" is precisely
-   the argument that would let something unchecked into the bucket. */
-async function putRendition(context, key, file) {
-  if (!file || typeof file === "string") return;
-  if (file.size === 0 || file.size > MAX_RENDITION_BYTES) return;
-  if (String(file.type || "").toLowerCase() !== "image/jpeg") return;
+   the argument that would let something unchecked into the bucket.
+
+   Returns the bytes, or null for anything that did not arrive or did not pass.
+   Checking is separate from storing because the key's name now depends on the
+   answer, and the key has to exist before there is anywhere to store them. */
+async function rendition(file) {
+  if (!file || typeof file === "string") return null;
+  if (file.size === 0 || file.size > MAX_RENDITION_BYTES) return null;
+  if (String(file.type || "").toLowerCase() !== "image/jpeg") return null;
 
   var bytes = new Uint8Array(await file.arrayBuffer());
-  if (sniff(bytes) !== "jpg") return;
+  return sniff(bytes) === "jpg" ? bytes : null;
+}
+
+async function putRendition(context, key, bytes) {
+  if (!bytes) return;
 
   await context.env.FLYERS.put(key, bytes, {
     httpMetadata: {
