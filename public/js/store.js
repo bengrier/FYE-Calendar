@@ -431,10 +431,29 @@ window.CalStore = (function () {
     });
   }
 
-  /* The three things the review screen can do to a published event. Each
+  /* The four things the review screen can do to a published event. Each
      re-hydrates before it resolves, and each does so with `fresh` set: the
      calendar is cached for a minute at the edge, and a reviewer who removes an
      event and still sees it concludes the removal failed. */
+
+  /* Everything a published event says, rewritten. `what` is { id } for one
+     event or { series } for every date one approval wrote, and the rest is the
+     whole record — title, org, place, blurb, start, time, tags, flyer — not
+     only the fields that changed. The server writes all of it; see
+     functions/api/admin/edit.js for why a patch would not do.
+
+     `flyer` is a key or null, and a new one is uploaded through `uploadFlyer`
+     first, exactly as the submit form does it. This call only ever carries the
+     key. */
+  function editEvent(what) {
+    return request("/api/admin/edit", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(what)
+    }).then(function (result) {
+      return hydrate(true, true).then(function () { return result; });
+    });
+  }
 
   function removeEvent(what) {
     return request("/api/admin/remove", {
@@ -496,6 +515,7 @@ window.CalStore = (function () {
     submit: submit,
     approve: approve,
     decline: decline,
+    editEvent: editEvent,
     removeEvent: removeEvent,
     rescheduleEvent: rescheduleEvent,
     setTagApproved: setTagApproved,

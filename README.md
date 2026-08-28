@@ -226,6 +226,7 @@ narrows the list by title, host or location.
 
 | | |
 | --- | --- |
+| **Edit the details** | everything the event says — title, host, times, room, description, tags, flyer |
 | **Move** a date | one occurrence goes to another day — the week it clashed with a holiday |
 | **Remove** a date | one occurrence comes off, the rest of the series untouched |
 | **It repeats too long** | keep the dates up to the one you choose, remove every date after it |
@@ -235,6 +236,50 @@ Every removal takes two presses: the first arms the button and makes it say what
 it is about to do, the second does it. **There is no undo** — the event rows are
 deleted. What survives is the submission: what was proposed, when, and which
 reviewer approved it, so "what happened to my event" still has an answer.
+
+### Editing what an event says
+
+**Edit the details** opens the submit form's own fields, filled in from the
+event, and `POST /api/admin/edit` writes them back. Same fields, same rules:
+both forms post into `validateEventFields` in `functions/_lib/submission.js`,
+which is the half of a submission that becomes an event and goes on being
+editable for as long as that event is on the calendar. The room that moved to
+E203, the title with the club's old name in it, the flyer that turns out to be
+last semester's — none of those needed a new submission, and until now all three
+got one.
+
+Two fields the form asks for are not here, and both are absences rather than
+omissions. **Who submitted it** is not editable because it is not kept:
+approving erases the name and address in the same statement that publishes the
+event. **The dates** are not editable because they already have controls that
+fit them better — Move for one occurrence, the trim for a series that runs too
+long — and a date field in the editor would be a second way to say the same
+thing that could disagree with the first.
+
+**A series is edited whole.** Every row an approval writes carries the same
+title, room and flyer — that is what makes them one thing in the list — so
+saving rewrites all of them. What genuinely varies between occurrences is the
+date, which is exactly the field the editor does not have.
+
+**The submission is not rewritten.** An edited event and the submission behind
+it are allowed to differ, and the live one is the event. The submission is the
+record of what was proposed and who decided it, and quietly rewriting it to
+match a correction made three weeks later would destroy the only answer to "what
+did I actually send you".
+
+The flyer is replaced the way the submit form uploads one: `POST /api/flyers`
+first, and the edit carries only the key it returns. The old artwork is not
+deleted at that moment — once nothing points at it the retention sweep frees the
+R2 object, which is what makes replacing a flyer safe to get wrong. Taking the
+flyer off entirely is the third thing the field can say, and the reason an edit
+sends the whole record rather than a patch: nothing else can tell "left alone"
+apart from "removed".
+
+A tag typed here that the calendar has never seen becomes filterable for
+everybody, the same as approving one a submitter invented. A custom tag the
+office has **turned off** stays off when it is put back on an event — putting a
+word back on a row is not the same decision as putting it back in everybody's
+filter bar, and that decision has its own tab.
 
 Only shortening a series, never lengthening one. The dates were expanded once,
 from a repeat rule a person wrote and a reviewer read; adding to them here would

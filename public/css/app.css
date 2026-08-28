@@ -1530,6 +1530,44 @@ textarea.input { font-size: 17px; line-height: 1.5; resize: vertical; }
   color: var(--color-accent-2-deep);
 }
 
+/* --- review screen: rewriting a published event -------------------------- */
+
+/* Sits between the event's own line and the dates under it, so the offer to
+   change what it says reads as part of what it says — not as one more thing
+   that can be done to it. */
+.sub__tools { margin-top: 18px; }
+
+/* Takes the whole pane rather than one column of it: these are the same fields
+   the read-only view shows, and the two side by side would be the same event
+   printed twice. The measure is the submit form's, because it is the same form
+   asking the same questions. */
+.edit { min-width: 0; max-width: 46em; }
+.edit__scope {
+  font-size: 16px;
+  color: var(--ink-65);
+  line-height: 1.5;
+  margin-top: 12px;
+  max-width: 40em;
+}
+.edit__form {
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  margin-top: 30px;
+}
+.edit__times { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; max-width: 22em; }
+.edit__actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+/* The flyer on the calendar now, shown at the size the submit form shows a
+   proof at rather than the thumbnail the meta column uses — this is the one
+   moment somebody is deciding whether it is still the right artwork. */
+.edit .dropzone__status .flyerproof { max-width: 260px; }
+
 /* --- review screen: the custom tag catalogue ----------------------------- */
 
 .tagcat { padding: 30px 40px 80px; max-width: 68em; }
@@ -1683,7 +1721,8 @@ textarea.input { font-size: 17px; line-height: 1.5; resize: vertical; }
   .tagcat__state { min-width: 0; }
   .week__grid { grid-template-columns: minmax(0, 1fr); }
   .submit__times,
-  .submit__who { grid-template-columns: minmax(0, 1fr); }
+  .submit__who,
+  .edit__times { grid-template-columns: minmax(0, 1fr); }
   .month__cell { min-height: 92px; padding: 6px 4px 10px 2px; }
   .modal { padding: 14px; }
 }

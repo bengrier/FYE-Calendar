@@ -7,7 +7,17 @@
    proves nothing. This copy is the one that decides.
 
    The two must agree on the *rules*, or the form will accept something the
-   server rejects. If you change one, change the other. */
+   server rejects. If you change one, change the other.
+
+   A submission is validated in two halves, and the split is not tidiness. The
+   inner half — `validateEventFields` — is the part of a submission that becomes
+   an event and stays editable for as long as that event is on the calendar: a
+   reviewer rewriting a title in the "On the calendar" tab is answering the same
+   question the submitter answered, months later, and the two must not be
+   allowed to disagree about what a title is allowed to be. The outer half is
+   everything that is only ever true of a queued submission — the dates it
+   expands to, and who to reply to about it — and nothing edits those after the
+   fact. See functions/api/admin/edit.js. */
 
 var MAX = {
   title: 140,
@@ -32,20 +42,22 @@ function text(v) {
   return typeof v === "string" ? v.trim() : "";
 }
 
-/* Returns { ok: true, value } or { ok: false, message, field }. */
-export function validateSubmission(body, todayIso) {
-  if (!body) return bad("That submission could not be read.");
+/* The half of a submission that becomes an event, and goes on being editable
+   once it is one. Returns { ok: true, value } or { ok: false, message, field }.
+
+   `tags` is the finished list either way: what the submitter picked plus what
+   they invented on the way in, and whatever the reviewer left on the row on the
+   way past. Which of those the calendar will let anyone filter by is decided
+   elsewhere — by approve.js on the way in, and by the `tags` catalogue after —
+   because that is a question about the word, not about this event. */
+export function validateEventFields(body) {
+  if (!body) return bad("That could not be read.");
 
   var title = text(body.title);
   var org = text(body.org);
   var place = text(body.place);
   var blurb = text(body.blurb);
-  var by = text(body.by);
-  var email = text(body.email);
-  var date = text(body.date);
   var time = text(body.time);
-  var repeat = text(body.repeat);
-  var repeatUntil = text(body.repeatUntil);
 
   if (!title) return bad("Give the event a name.", "title");
   if (title.length > MAX.title) return bad("That title is too long.", "title");
@@ -58,14 +70,39 @@ export function validateSubmission(body, todayIso) {
     return bad("Keep it under " + MAX.blurb + " characters.", "blurb");
   }
 
-  if (!ISO_DATE.test(date)) return bad("Pick a date.", "date");
-  if (todayIso && date < todayIso) return bad("That date has already passed.", "date");
-
   var start = Number(body.start);
   if (!isFinite(start) || start < 0 || start > 23.99) {
     return bad("Pick a start time.", "startTime");
   }
   if (!time) return bad("Pick a start and end time.", "startTime");
+
+  var tags = Array.isArray(body.tags) ? body.tags : [];
+  if (tags.length > MAX.tags) return bad("That is more tags than an event needs.", "tags");
+
+  return {
+    ok: true,
+    value: {
+      title: title, org: org, place: place, blurb: blurb,
+      start: start, time: time,
+      tags: cleanTags(tags)
+    }
+  };
+}
+
+/* Returns { ok: true, value } or { ok: false, message, field }. */
+export function validateSubmission(body, todayIso) {
+  var core = validateEventFields(body);
+  if (!core.ok) return core;
+  var event = core.value;
+
+  var by = text(body.by);
+  var email = text(body.email);
+  var date = text(body.date);
+  var repeat = text(body.repeat);
+  var repeatUntil = text(body.repeatUntil);
+
+  if (!ISO_DATE.test(date)) return bad("Pick a date.", "date");
+  if (todayIso && date < todayIso) return bad("That date has already passed.", "date");
 
   if (REPEATS.indexOf(repeat) === -1) return bad("That repeat rule is not one we offer.", "repeat");
   if (repeat) {
@@ -80,29 +117,32 @@ export function validateSubmission(body, todayIso) {
     return bad("Use your colostate.edu address.", "email");
   }
 
-  var tags = Array.isArray(body.tags) ? body.tags : [];
   var newTags = Array.isArray(body.newTags) ? body.newTags : [];
-  if (tags.length > MAX.tags || newTags.length > MAX.tags) {
+  if (newTags.length > MAX.tags) {
     return bad("That is more tags than an event needs.", "tags");
   }
-  var clean = function (list) {
-    return list
-      .map(text)
-      .filter(Boolean)
-      .filter(function (t) { return t.length <= MAX.tag; })
-      .filter(function (t, i, a) { return a.indexOf(t) === i; });
-  };
 
   return {
     ok: true,
     value: {
-      title: title, org: org, place: place, blurb: blurb,
-      date: date, start: start, time: time,
+      title: event.title, org: event.org, place: event.place, blurb: event.blurb,
+      date: date, start: event.start, time: event.time,
       repeat: repeat, repeatUntil: repeat ? repeatUntil : null,
       by: by, email: email,
-      tags: clean(tags), newTags: clean(newTags)
+      tags: event.tags, newTags: cleanTags(newTags)
     }
   };
+}
+
+/* Trimmed, emptied of blanks, capped in length and deduplicated — in that
+   order, because "  Robotics " and "Robotics" are one tag and the calendar
+   should not carry both. */
+export function cleanTags(list) {
+  return list
+    .map(text)
+    .filter(Boolean)
+    .filter(function (t) { return t.length <= MAX.tag; })
+    .filter(function (t, i, a) { return a.indexOf(t) === i; });
 }
 
 function bad(message, field) {

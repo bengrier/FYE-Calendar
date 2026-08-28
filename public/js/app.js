@@ -119,7 +119,17 @@
     pubTrimAfter: "",    // the last date a trim would keep
     pubConfirm: null,    // which removal has been armed by its first press
     pubBusy: false,
-    pubNote: ""
+    pubNote: "",
+
+    /* Rewriting what a published event says. `pubEdit` is the key of the series
+       being edited, and while it is set that pane is the editor instead of the
+       read-only detail — the two describe the same fields and showing both
+       would be showing the same event twice, once stale. The draft is held
+       here rather than read out of the inputs so a repaint of the pane, or a
+       keystroke in the search box beside it, cannot lose half a correction. */
+    pubEdit: null,
+    pubEditDraft: null,
+    pubEditErrors: {}
   };
 
   var overlays = one("#overlays");
@@ -1142,6 +1152,17 @@
     return h + mins / 60;
   }
 
+  /* 18.5 -> "18:30", the inverse of the above and what fills a <input
+     type="time"> from an event that is already on the calendar. */
+  function timeInputFromDecimal(hours) {
+    if (typeof hours !== "number" || !isFinite(hours)) return "";
+    var whole = Math.floor(hours);
+    var mins = Math.round((hours - whole) * 60);
+    if (mins === 60) { whole += 1; mins = 0; }
+    if (whole > 23) { whole = 23; mins = 59; }
+    return String(whole).padStart(2, "0") + ":" + String(mins).padStart(2, "0");
+  }
+
   var MAX_BLURB = 600;
 
   /* The copy asks for a CSU address and the office replies to it, so anything
@@ -1198,7 +1219,11 @@
      name without needing ids. `name` ties it to its validation message. */
   function labelled(labelText, control, opts) {
     opts = opts || {};
-    var message = opts.name ? state.errors[opts.name] : null;
+    /* The submit form's errors by default. The review screen's editor keeps its
+       own bag: a half-finished correction to a published event has nothing to
+       do with a draft submission somebody left open in the other overlay. */
+    var bag = opts.errors || state.errors;
+    var message = opts.name ? bag[opts.name] : null;
     if (message && control.setAttribute) control.setAttribute("aria-invalid", "true");
 
     return el("label", {
@@ -1234,13 +1259,20 @@
     );
   }
 
-  /* A text control bound to one key of the draft. Writing straight into the
-     draft on every keystroke means no render is needed to keep them in step. */
-  function bound(tag, key, props) {
+  /* A text control bound to one key of an object. Writing straight into it on
+     every keystroke means no render is needed to keep them in step — which is
+     the whole reason the caret survives typing in either of the two forms that
+     use this. `bound` is the submit form's draft; the review screen's editor
+     holds a different one. */
+  function boundTo(obj, tag, key, props) {
     var node = el(tag, Object.assign({ class: "input" }, props || {}));
-    node.value = draft()[key];
-    node.addEventListener("input", function (e) { draft()[key] = e.target.value; });
+    node.value = obj[key];
+    node.addEventListener("input", function (e) { obj[key] = e.target.value; });
     return node;
+  }
+
+  function bound(tag, key, props) {
+    return boundTo(draft(), tag, key, props);
   }
 
   /* It really was submitted this time. The database has it, and the only
@@ -2460,10 +2492,21 @@
     });
     removeAll.disabled = state.pubBusy;
 
+    /* Deliberately not beside Remove in the row below. Everything in that row
+       is a delete and takes a second press to confirm; this is the one action
+       on the screen that is neither, and grouping it with them would make a
+       correction look like it costs what a removal costs. */
+    var edit = el("button", {
+      type: "button", class: "btn-outline-accent", text: "Edit the details",
+      onClick: function () { openEdit(g); }
+    });
+    edit.disabled = state.pubBusy;
+
     return el("div", { class: "sub" }, [
       el("div", { class: "kicker", text: lead.org }),
       el("h3", { class: "sub__title", text: lead.title }),
       el("div", { class: "sub__when", text: lead.time + " · " + lead.place }),
+      el("div", { class: "sub__tools" }, [edit]),
 
       el("div", {
         class: many ? "sub__series" : "sub__rule",
@@ -2546,6 +2589,507 @@
     ]);
   }
 
+  /* ======================================================================
+     Review screen — rewriting what a published event says
+
+     Everything above this decides whether an event is on the calendar and on
+     which days. This decides what it says once it is: the room that moved to
+     E203, the title with the club's old name in it, the flyer that turns out to
+     be last semester's. Until now the only answer to any of those was to ask
+     the club to submit the whole thing again — which meant the calendar carried
+     a wrong room until somebody else's week allowed it.
+
+     Every field the submit form asks for is here, and they are the same fields
+     checked by the same rules: `validateEventFields` on the server is what both
+     forms post into. The two exceptions are deliberate. **Who submitted it** is
+     not editable because it is not kept — approving erases the name and address
+     in the same statement that publishes the event. **The dates** are not
+     editable here because they already have controls that fit them better: Move
+     changes one occurrence, and a series is shortened by Trim, both on the
+     detail view this replaces.
+     ====================================================================== */
+
+  /* Every word the filter bar already owns, so what is left of an event's tags
+     is the part somebody wrote by hand.
+
+     A group carrying `matches` is skipped: "Repeating" and "One-off" are read
+     off the events themselves and never written on one, so a tag by that name
+     would be a coincidence rather than a chip — but it is also not a word a
+     reviewer should find in the custom box, and treating it as fixed is the
+     safer of the two mistakes. */
+  function fixedVocabulary() {
+    var known = { "All disciplines": true };
+    C.GROUPS.forEach(function (g) {
+      g.chips.forEach(function (chip) { known[chip] = true; });
+    });
+    return known;
+  }
+
+  /* The event as the form's answers. `spanOf` is what reads an end time back
+     out of the prose — "4:00 – 6:00 pm" is the only place the end is recorded,
+     because that is the half of the span nothing else needs. */
+  function editDraftFrom(g) {
+    var lead = g.lead;
+    var span = D.spanOf(lead);
+    var known = fixedVocabulary();
+    var tags = {};
+
+    C.GROUPS.forEach(function (grp) {
+      if (grp.key === "custom" || grp.key === "time" || grp.matches) return;
+      var chosen = grp.chips.filter(function (c) { return lead.tags.indexOf(c) > -1; })[0] || "";
+      if (!chosen && grp.openToAll && lead.tags.indexOf("All disciplines") > -1) {
+        chosen = "All disciplines";
+      }
+      tags[grp.key] = chosen;
+    });
+
+    return {
+      title: lead.title,
+      org: lead.org,
+      place: lead.place,
+      blurb: lead.blurb,
+      startTime: timeInputFromDecimal(span.start),
+      endTime: timeInputFromDecimal(span.end),
+      tags: tags,
+      customTags: lead.tags.filter(function (t) { return !known[t]; }),
+      flyerKey: lead.flyer || null,
+      /* What it was when the editor opened, so taking the flyer off is not a
+         decision somebody has to leave the screen and undo by uploading the
+         file again. */
+      flyerWas: lead.flyer || null,
+      flyerFile: null,
+      flyerError: null
+    };
+  }
+
+  /* The same checks the submit form runs, minus the ones about a submission
+     rather than an event: there is no date here, no repeat rule, and nobody to
+     reply to. The server re-checks all of it. */
+  function validateEditDraft(d) {
+    var errors = {};
+
+    if (!d.title.trim()) errors.title = "Give the event a name.";
+    if (!d.org.trim()) errors.org = "Say who is hosting it.";
+    if (!d.place.trim()) errors.place = "Say where it is.";
+    if (!d.blurb.trim()) {
+      errors.blurb = "Say what happens there.";
+    } else if (d.blurb.trim().length > MAX_BLURB) {
+      errors.blurb = "Keep it under " + MAX_BLURB + " characters — that is about a short paragraph.";
+    }
+
+    var start = decimalFromTimeInput(d.startTime);
+    var end = decimalFromTimeInput(d.endTime);
+    if (start === null) errors.startTime = "Pick a start time.";
+    if (end === null) errors.endTime = "Pick an end time.";
+    else if (start !== null && end <= start) errors.endTime = "The end has to come after the start.";
+
+    return errors;
+  }
+
+  /* The submit form's own options, plus — only where the event needs it — a way
+     for the select to say the event carries nothing from this group. The form
+     does not offer that for disciplines, because a new submission with no
+     discipline should read as open to everybody. An event that has been on the
+     calendar since before the group existed is a different thing, and a select
+     must not show a value the event does not have. */
+  function editOptions(grp, current) {
+    var options = submitOptions(grp);
+    var has = options.filter(function (o) { return o.value === current; }).length > 0;
+    return has ? options : [{ value: current, label: "Not tagged" }].concat(options);
+  }
+
+  /* The fixed chips and the hand-written ones, in the two shapes they are
+     decided in: a select each for the vocabulary the filter bar owns, and a
+     free box for everything else. Lifted from the submit form deliberately —
+     a reviewer and a submitter are answering the same question, and answering
+     it through two different controls is how the two lists drift. */
+  function editTagsBlock(d) {
+    var chosenTags = el("div", { class: "taglist" });
+    var tagInput = el("input", {
+      type: "text",
+      class: "input input--tag",
+      placeholder: "Write a new one",
+      onKeyDown: function (e) {
+        if (e.key === "Enter") { e.preventDefault(); addTag(tagInput.value); tagInput.value = ""; }
+      }
+    });
+
+    var picker = selectOf(
+      [{ value: "", label: "Custom Tags" }],
+      { class: "select select--tag select--picker", "aria-label": "Custom tags already in use" }
+    );
+
+    function paintTags() {
+      fill(chosenTags, d.customTags.map(function (tag) {
+        return el("span", { class: "tagchip" }, [
+          tag,
+          el("button", {
+            type: "button", class: "tagchip__remove", title: "Remove tag",
+            "aria-label": "Remove " + tag,
+            onClick: function () {
+              d.customTags = d.customTags.filter(function (x) { return x !== tag; });
+              paintTags();
+            },
+            text: "×"
+          })
+        ]);
+      }));
+
+      /* The whole catalogue, not only the approved half. This screen is the one
+         that knows the difference — a tag the office has turned off is drawn
+         struck through in the detail view beside it — and a reviewer putting a
+         turned-off tag back on an event is a reasonable thing to do that the
+         filter bar's list would silently hide. */
+      fill(picker, [{ value: "", label: "Custom Tags" }].concat(
+        S.tagCatalog()
+          .filter(function (t) { return d.customTags.indexOf(t.name) === -1; })
+          .map(function (t) {
+            return { value: t.name, label: t.approved ? t.name : t.name + " (turned off)" };
+          })
+      ).map(function (o) { return el("option", { value: o.value, text: o.label }); }));
+      picker.value = "";
+    }
+
+    function addTag(raw) {
+      var tag = (raw || "").trim().replace(/\s+/g, " ");
+      if (!tag) return;
+      var already = d.customTags.some(function (t) {
+        return t.toLowerCase() === tag.toLowerCase();
+      });
+      if (!already) d.customTags = d.customTags.concat([tag]);
+      paintTags();
+    }
+
+    picker.addEventListener("change", function (e) {
+      if (e.target.value) addTag(e.target.value);
+    });
+
+    paintTags();
+
+    return el("div", { class: "group group--tags" }, [
+      el("div", { class: "group__label", text: "Their own tags" }),
+      el("div", { class: "tagrow" }, [
+        picker,
+        el("span", { class: "tagrow__or", text: "or" }),
+        tagInput,
+        el("button", {
+          type: "button", class: "btn-outline-accent", text: "Add tag",
+          onClick: function () { addTag(tagInput.value); tagInput.value = ""; }
+        })
+      ]),
+      chosenTags,
+      el("div", {
+        class: "group__hint",
+        text: "A tag nobody has used before becomes filterable for everyone as soon as this is saved. Turning one off again is the Custom tags tab."
+      })
+    ]);
+  }
+
+  /* The flyer. The one field here that is a file rather than a sentence, and
+     the one with three answers rather than two: leave it, put a different one
+     on, take it off entirely. Its own node and its own paint, so choosing a
+     file does not rebuild the form around it.
+
+     Nothing is uploaded until Save. The old artwork is not deleted then either
+     — the retention sweep frees a flyer once nothing points at it, which is
+     what makes replacing one safe to get wrong. */
+  function editFlyerField(d) {
+    var status = el("div", { class: "dropzone__status" });
+
+    var input = el("input", {
+      type: "file",
+      accept: "application/pdf,image/*",
+      onChange: function (e) {
+        var file = e.target.files && e.target.files[0];
+        d.flyerError = null;
+
+        /* Checked here only so somebody is told immediately rather than after
+           uploading 30 MB. The server checks the bytes themselves. */
+        if (file && file.size > 10 * 1024 * 1024) {
+          d.flyerError = "That file is over 10 MB. Export it smaller and try again.";
+          d.flyerFile = null;
+          e.target.value = "";
+        } else {
+          d.flyerFile = file || null;
+        }
+        paint();
+      }
+    });
+
+    function paint() {
+      status.hidden = false;
+
+      if (d.flyerFile) {
+        /* An event that has never had artwork is being given some, not having
+           some replaced, and the way out of a file chosen by mistake is
+           different in each case. Saying "keep the current one" to somebody
+           looking at a text listing names a flyer that does not exist. */
+        var replacing = !!d.flyerWas;
+
+        fill(status, [
+          el("div", { class: "dropzone__file", text: d.flyerFile.name }),
+          el("div", {
+            class: "dropzone__note",
+            text: Math.max(1, Math.round(d.flyerFile.size / 1024)) + " KB — " +
+              (replacing
+                ? "it replaces the current flyer when you save."
+                : "it goes up when you save.")
+          }),
+          el("button", {
+            type: "button", class: "btn-link",
+            text: replacing ? "Keep the current one instead" : "Do not attach it",
+            onClick: function () {
+              d.flyerFile = null;
+              input.value = "";
+              paint();
+            }
+          })
+        ]);
+        return;
+      }
+
+      if (d.flyerKey) {
+        fill(status, [
+          flyerProof(d.flyerKey, d.title),
+          el("div", { class: "dropzone__note", text: "On the calendar now." }),
+          el("button", {
+            type: "button", class: "btn-link", text: "Take the flyer off",
+            onClick: function () { d.flyerKey = null; paint(); }
+          }),
+          d.flyerError
+            ? el("div", { class: "dropzone__note dropzone__note--bad", text: d.flyerError })
+            : null
+        ]);
+        return;
+      }
+
+      fill(status, [
+        el("div", {
+          class: "dropzone__note",
+          text: d.flyerWas
+            ? "The flyer comes off when you save. The event lists as a text card."
+            : "No flyer. It lists as a text card."
+        }),
+        d.flyerWas
+          ? el("button", {
+              type: "button", class: "btn-link", text: "Put the old one back",
+              onClick: function () { d.flyerKey = d.flyerWas; paint(); }
+            })
+          : null,
+        d.flyerError
+          ? el("div", { class: "dropzone__note dropzone__note--bad", text: d.flyerError })
+          : null
+      ]);
+    }
+
+    paint();
+
+    return el("label", { class: "field" }, [
+      el("span", { class: "field__label", text: "Flyer page" }),
+      el("span", { class: "dropzone" }, [
+        el("span", {
+          text: "One page, PDF or image, up to 10 MB — the same as the submit form takes. " +
+            "A new one replaces what students and the projector see everywhere this event appears."
+        }),
+        input,
+        status
+      ])
+    ]);
+  }
+
+  /* Check, upload the flyer if a new one was chosen, then write the record.
+
+     Two requests rather than one, for the reason the submit form has two: the
+     file is what takes the time, and a refusal that made somebody choose it
+     again would make them send ten megabytes again. `act` is what keeps the
+     screen still until the server has agreed, the same as every other decision
+     on this tab. */
+  function saveEdit(g) {
+    var d = state.pubEditDraft;
+    if (!d || state.pubBusy) return;
+
+    state.pubEditErrors = validateEditDraft(d);
+    if (Object.keys(state.pubEditErrors).length) {
+      state.pubNote = "";
+      renderReview();
+      var firstBad = one(".field--error .input, .field--error select", reviewNode);
+      if (firstBad) firstBad.focus();
+      return;
+    }
+
+    var start = decimalFromTimeInput(d.startTime);
+    var end = decimalFromTimeInput(d.endTime);
+    var title = d.title.trim();
+    var file = d.flyerFile;
+    var replaced = file && d.flyerWas;
+
+    var tags = Object.keys(d.tags)
+      .map(function (k) { return d.tags[k]; })
+      .filter(Boolean)
+      .concat(d.customTags);
+
+    act(
+      function () {
+        var key = file ? S.uploadFlyer(file) : Promise.resolve(d.flyerKey);
+        return key.then(function (flyer) {
+          return S.editEvent({
+            /* By series where there is one, so every date one approval wrote is
+               rewritten in a single statement. A seeded placeholder has no
+               submission behind it and goes by its own id. */
+            id: g.series ? null : g.lead.id,
+            series: g.series || null,
+            title: title,
+            org: d.org.trim(),
+            place: d.place.trim(),
+            blurb: d.blurb.trim(),
+            start: start,
+            time: D.spanLabel(start, end),
+            tags: tags,
+            flyer: flyer || null
+          });
+        });
+      },
+      function (result) {
+        clearEdit();
+        return "“" + title + "” is updated" +
+          (result.updated === 1 ? "" : " on all " + result.updated + " dates") +
+          ", for everybody, within the minute." +
+          (replaced
+            ? " The new flyer is up; the one it replaced is freed on the next sweep."
+            : file ? " The flyer is up." : "");
+      }
+    );
+  }
+
+  function openEdit(g) {
+    if (state.pubBusy) return;
+    state.pubEdit = g.key;
+    state.pubEditDraft = editDraftFrom(g);
+    state.pubEditErrors = {};
+    state.pubConfirm = null;
+    state.pubMove = null;
+    state.pubNote = "";
+    renderReview();
+  }
+
+  /* Mutates only, so it can be called from inside `act` — which renders once,
+     afterwards, and would otherwise render twice. */
+  function clearEdit() {
+    state.pubEdit = null;
+    state.pubEditDraft = null;
+    state.pubEditErrors = {};
+  }
+
+  function closeEdit() {
+    clearEdit();
+    state.pubNote = "";
+    renderReview();
+  }
+
+  function publishedEdit(g) {
+    var d = state.pubEditDraft || (state.pubEditDraft = editDraftFrom(g));
+    var errors = state.pubEditErrors;
+    var errorCount = Object.keys(errors).length;
+    var many = g.events.length > 1;
+
+    var save = el("button", {
+      type: "button",
+      class: "btn-primary",
+      text: state.pubBusy ? "Saving…" : (many ? "Save to all " + g.events.length + " dates" : "Save changes"),
+      onClick: function () { saveEdit(g); }
+    });
+
+    var cancel = el("button", {
+      type: "button", class: "btn-secondary", text: "Cancel", onClick: closeEdit
+    });
+
+    save.disabled = state.pubBusy;
+    cancel.disabled = state.pubBusy;
+
+    return el("div", { class: "edit" }, [
+      el("div", {}, [
+        el("div", { class: "kicker", text: "Editing" }),
+        el("h3", { class: "sub__title", text: g.lead.title }),
+        el("div", {
+          class: "edit__scope",
+          text: many
+            ? "Every one of the " + g.events.length + " dates carries the same title, " +
+              "room, description and flyer — that is what makes them one series — so " +
+              "saving rewrites all of them. The dates themselves are moved one at a " +
+              "time, with Move, back on the detail view."
+            : "One event. Its date is changed with Move, back on the detail view."
+        })
+      ]),
+
+      errorCount
+        ? el("div", { class: "alert", role: "alert", tabindex: "-1" }, [
+            el("strong", {
+              text: errorCount === 1
+                ? "One thing needs fixing before this can be saved."
+                : errorCount + " things need fixing before this can be saved."
+            }),
+            el("ul", { class: "alert__list" }, Object.keys(errors).map(function (k) {
+              return el("li", { text: errors[k] });
+            }))
+          ])
+        : null,
+
+      el("div", { class: "edit__form" }, [
+        labelled("Event title",
+          boundTo(d, "input", "title", { type: "text" }),
+          { name: "title", errors: errors }),
+        labelled("Hosting club or organization",
+          boundTo(d, "input", "org", { type: "text" }),
+          { name: "org", errors: errors }),
+
+        el("div", { class: "edit__times" }, [
+          labelled("Starts",
+            boundTo(d, "input", "startTime", { type: "time", class: "input input--sm" }),
+            { name: "startTime", errors: errors }),
+          labelled("Ends",
+            boundTo(d, "input", "endTime", { type: "time", class: "input input--sm" }),
+            { name: "endTime", errors: errors })
+        ]),
+
+        labelled("Location",
+          boundTo(d, "input", "place", { type: "text" }),
+          { name: "place", errors: errors }),
+        labelled("What happens there",
+          boundTo(d, "textarea", "blurb", { rows: "4" }),
+          { name: "blurb", errors: errors }),
+
+        el("div", { class: "group" }, [
+          el("div", { class: "group__label", text: "Tags students filter by" }),
+          el("div", { class: "group__selects" }, C.GROUPS
+            /* The same three exclusions the submit form makes, for the same
+               reasons: custom tags are their own box below, time of day is
+               derived from the start time, and whether an event repeats is
+               counted off the rows rather than written on them. */
+            .filter(function (grp) {
+              return grp.key !== "custom" && grp.key !== "time" && !grp.matches;
+            })
+            .map(function (grp) {
+              var current = d.tags[grp.key] || "";
+              var select = selectOf(editOptions(grp, current), {
+                class: "select select--tag",
+                "aria-label": grp.any,
+                onChange: function (e) { d.tags[grp.key] = e.target.value; }
+              });
+              select.value = current;
+              return select;
+            }))
+        ]),
+
+        editTagsBlock(d),
+        editFlyerField(d),
+
+        el("div", { class: "edit__actions" }, [save, cancel]),
+
+        state.pubNote ? el("div", { class: "sub__note", text: state.pubNote }) : null
+      ])
+    ]);
+  }
+
   function publishedEmpty() {
     var st = S.state();
 
@@ -2585,6 +3129,11 @@
             state.pubNote = "";
             state.pubConfirm = null;
             state.pubMove = null;
+            /* Nothing half-typed follows the selection to another event. The
+               same rule the tab strip keeps, and for the same reason: a draft
+               that outlived what it was about would be saved onto the wrong
+               thing. */
+            clearEdit();
             renderReview();
           }
         }, [
@@ -2598,7 +3147,10 @@
       }));
 
       fill(panes, g
-        ? [publishedSub(g), publishedMeta(g)]
+        /* The editor takes the whole pane rather than sitting beside the
+           detail. They describe the same fields, and showing both would be
+           showing the event twice — once of it already out of date. */
+        ? (state.pubEdit === g.key ? [publishedEdit(g)] : [publishedSub(g), publishedMeta(g)])
         : el("div", {
             class: "meta__none",
             text: "Nothing here matches “" + state.pubQuery.trim() + "”."
@@ -2642,9 +3194,10 @@
     return el("div", { class: "reviewnote" }, [
       el("strong", { text: "Everything here is live." }),
       " Removing an event takes it off the calendar for everybody within the " +
-      "minute, and moving a date moves it for everybody. Neither can be undone " +
-      "from this screen — the events are gone, and only the submission behind " +
-      "them is kept."
+      "minute; moving a date moves it for everybody; editing one changes what " +
+      "everybody reads. None of it can be undone from this screen. What is kept " +
+      "either way is the submission behind the event — what was proposed, and " +
+      "who approved it — which is why a correction made here does not rewrite it."
     ]);
   }
 
@@ -2751,6 +3304,7 @@
           state.pubMove = null;
           state.pubNote = "";
           state.note = "";
+          clearEdit();
           renderReview();
         }
       }, [
@@ -2849,10 +3403,13 @@
     state.changesOpen = false;
     state.feedback = "";
     state.approvedNew = [];
-    /* An armed removal must not still be armed when the screen comes back. */
+    /* An armed removal must not still be armed when the screen comes back, and
+       a half-written correction must not still be sitting over an event that
+       another reviewer may have changed in the meantime. */
     state.pubConfirm = null;
     state.pubMove = null;
     state.pubNote = "";
+    clearEdit();
     render();
     restoreFocus();
   }
@@ -3016,6 +3573,10 @@
     if (e.key === "Escape") {
       if (state.detailId) { closeDetail(); return; }
       if (state.submitOpen) { closeSubmit(); return; }
+      /* An open editor is what Escape dismisses first. The review screen is
+         still there behind it, and losing the whole screen because somebody
+         wanted out of one form would be the wrong half to close. */
+      if (state.reviewOpen && state.pubEdit && !state.pubBusy) { closeEdit(); return; }
       if (state.reviewOpen) { closeReview(); return; }
       if (state.slideshow) { stopSlideshow(); return; }
       /* Nothing open and a search running: Escape clears it, which is what
