@@ -884,7 +884,7 @@ The plan was a Cloudflare rate limiting rule on `/api/submissions`, and
 the edge it costs nothing and cannot be reasoned around.
 
 Rate limiting rules belong to a zone. Same absence, same consequence. So the
-limiter is code — five accepted submissions per IP per hour, counted in
+limiter is code — fifty accepted submissions per IP per hour, counted in
 `submission_attempts`, rows deleted as they age out.
 
 Two deliberate details. It counts **accepted** submissions rather than requests,

@@ -168,6 +168,11 @@ nobody spends their allowance on their own typos, and the rows live in
 `submission_attempts` and are deleted as they age out. This is code rather than
 a Cloudflare rule for a reason given under "Deploying".
 
+The key is `CF-Connecting-IP`, so anyone behind a NAT shares one allowance with
+everyone else egressing through it — a whole building can look like one
+submitter. That is the main reason the number is fifty rather than something
+tighter, and it is worth remembering before lowering it again.
+
 ## Reviewing
 
 The **Review queue** link in the page footer. It points at `/review`, which is a
