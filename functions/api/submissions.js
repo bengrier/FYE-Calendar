@@ -17,7 +17,7 @@ import { validateSubmission } from "../_lib/submission.js";
 import { sweepInBackground } from "../_lib/retention.js";
 
 var WINDOW_MS = 60 * 60 * 1000;
-var LIMIT = 5;
+var LIMIT = 50;
 
 /* Counts only submissions that were actually accepted, not requests made. A
    student fixing a validation message would otherwise spend their allowance on

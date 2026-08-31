@@ -162,7 +162,7 @@ ever disagree, the form will accept something the server rejects — so
 Uploads are checked on their **bytes**, not on the filename or the declared
 content type: a text file renamed `.png` and sent as `image/png` is refused.
 
-**Five accepted submissions per IP per hour**, after which the endpoint answers
+**Fifty accepted submissions per IP per hour**, after which the endpoint answers
 `429` with something a student can read. Only accepted submissions count, so
 nobody spends their allowance on their own typos, and the rows live in
 `submission_attempts` and are deleted as they age out. This is code rather than
@@ -453,7 +453,7 @@ hostname has two.
 
 **Rate limiting is a zone feature too**, which is why the limiter on
 `POST /api/submissions` is code in the Function rather than a dashboard rule.
-Five accepted submissions per IP per hour, counted in `submission_attempts`.
+Fifty accepted submissions per IP per hour, counted in `submission_attempts`.
 
 If `fyetools.com` is ever moved onto Cloudflare, all of this collapses back into
 the simple version: one hostname, Access over it, a WAF rule instead of the
