@@ -245,6 +245,30 @@
       .sort(byWhen);
   }
 
+  /* The running order the stage, the countdown and the reels all read from.
+
+     On the page it is simply what is in view, past events included — the same
+     list the grid draws, which greys Tuesday's talk rather than hiding it.
+
+     The projector is a different promise. It runs unattended in a lobby for
+     the whole week, and nobody walking past on Thursday needs Tuesday's
+     flyer — or this morning's, once it is over. So the slideshow shows only
+     what is still to come. */
+  function stageList() {
+    var vis = visible();
+    return state.slideshow ? vis.filter(stillToCome) : vis;
+  }
+
+  /* Still to come: a later day, or today and not yet finished. The end comes
+     out of the event's own prose, the same place the calendar file reads it
+     from, so an event leaves the projector when it ends rather than at
+     midnight. */
+  function stillToCome(ev) {
+    if (ev.date !== C.CONFIG.today) return ev.date > C.CONFIG.today;
+    var now = new Date();
+    return D.spanOf(ev).end > now.getHours() + now.getMinutes() / 60;
+  }
+
   /* Matches anywhere on the calendar, not just in view — a search that finds
      nothing this week should say how much it would find if you looked wider. */
   function matchesEverywhere() {
@@ -257,7 +281,7 @@
   /* Null when the view is empty — the showcase then says so rather than
      putting some other week's flyer on the stage. */
   function current(vis) {
-    vis = vis || visible();
+    vis = vis || stageList();
     if (!vis.length) return null;
     return vis[Math.min(state.active, vis.length - 1)];
   }
@@ -267,7 +291,7 @@
      passed. */
   function nextUpcoming() {
     return matchesEverywhere().filter(function (e) {
-      return e.date >= C.CONFIG.today;
+      return state.slideshow ? stillToCome(e) : e.date >= C.CONFIG.today;
     })[0] || null;
   }
 
@@ -345,7 +369,7 @@
      ====================================================================== */
 
   function go(i) {
-    var n = Math.max(1, visible().length);
+    var n = Math.max(1, stageList().length);
     state.active = ((i % n) + n) % n;
     state.t = 0;
     renderShowcase();
@@ -587,7 +611,10 @@
       ? (state.query.trim()
           ? "Nothing here matches “" + state.query.trim() + "”."
           : "Nothing here matches that filter.")
-      : "Nothing scheduled this " + (state.view === "month" ? "month" : "week") + ".";
+      /* "Nothing scheduled" would be a lie on the projector, where the week
+         may well have been full and simply be over. */
+      : (state.slideshow ? "Nothing left this " : "Nothing scheduled this ") +
+        (state.view === "month" ? "month" : "week") + ".";
 
     return el("div", { class: "stage-empty" }, [
       el("div", { class: "stage-empty__line", text: line }),
@@ -629,6 +656,9 @@
       ? cur.id
       : ["empty", state.view, state.anchor, state.query,
          JSON.stringify(state.selected),
+         /* The line differs between the page and the projector, so a stage
+            that empties on one must not keep the other's wording. */
+         state.slideshow,
          /* The empty stage now also depends on whether the calendar has
             loaded, so leaving these out strands it on "Loading…" after the
             fetch fails — the same way leaving the anchor out once stranded it
@@ -669,7 +699,10 @@
   }
 
   function renderShowcase() {
-    var vis = visible();
+    /* One list feeds both reels. While the projector is up the page's own
+       reel behind it is painted from the future-only list too — it is under a
+       full-surface overlay and nobody can see it, and exiting repaints it. */
+    var vis = stageList();
     var cur = current(vis);
     var activeIndex = Math.min(state.active, Math.max(0, vis.length - 1));
     var signature = vis.map(function (e) { return e.id; }).join("|");
@@ -704,7 +737,7 @@
   }
 
   function paintCountdown(vis) {
-    vis = vis || visible();
+    vis = vis || stageList();
     var secs = C.CONFIG.slideSeconds;
     var left = Math.max(1, Math.ceil(secs * (1 - state.t)));
     /* Empty views say so on the stage itself, so the line under it goes quiet.
@@ -3419,6 +3452,9 @@
      ====================================================================== */
 
   var slideshowNode = null;
+  /* The ids on the stage last time the projector looked, so it can tell when
+     an event has dropped out from under the active index. */
+  var stageSignature = null;
 
   function renderSlideshow() {
     if (!state.slideshow) {
@@ -3477,10 +3513,62 @@
     overlays.appendChild(slideshowNode);
   }
 
+  /* Point the stage at a given event within whatever the running order now
+     is, falling back to the front when it is not in there. Starting or
+     stopping the projector rewrites that order, so the event has to be carried
+     across rather than its number: opening the slideshow on the third flyer of
+     the week must not land on whatever happens to be third once everything
+     past has been dropped. */
+  function setActiveTo(ev) {
+    var ids = stageList().map(function (e) { return e.id; });
+    var at = ev ? ids.indexOf(ev.id) : -1;
+    state.active = at > -1 ? at : 0;
+    state.t = 0;
+    stageSignature = ids.join("|");
+  }
+
+  /* Two things go stale on a screen nobody is touching, and nothing else
+     catches either. The day rolls over — the visibilitychange handler that
+     refreshes `today` never fires on a tab that is never hidden. And the event
+     on the stage ends — the slide timer stops on a one-event view, which is
+     exactly the view a projector is left in when the thing that just finished
+     was the last one of the day. */
+  function projectorUpkeep() {
+    var now = D.toIso(new Date());
+    if (now !== C.CONFIG.today) {
+      C.CONFIG.today = now;
+      /* The week has to move with the day, or a screen left up over the
+         weekend spends Monday looking at a week entirely behind it. */
+      state.anchor = now;
+      gridSignature = null;
+      stageSignature = null;
+      state.active = 0;
+      state.t = 0;
+      render();
+      return;
+    }
+
+    var ids = stageList().map(function (e) { return e.id; });
+    var signature = ids.join("|");
+    if (signature === stageSignature) return;
+
+    /* Whatever was on the stage is named by the old order, not the new one,
+       so read it out of the signature before overwriting it. */
+    var before = stageSignature ? stageSignature.split("|") : [];
+    var was = before[Math.min(state.active, before.length - 1)];
+    stageSignature = signature;
+
+    var at = ids.indexOf(was);
+    state.active = at > -1 ? at : 0;
+    state.t = 0;
+    renderShowcase();
+  }
+
   function startSlideshow() {
     if (!state.slideshow) focusBeforeOverlay = document.activeElement;
+    var showing = current();
     state.slideshow = true;
-    state.t = 0;
+    setActiveTo(showing);
     render();
     try {
       var p = document.documentElement.requestFullscreen();
@@ -3489,7 +3577,11 @@
   }
 
   function stopSlideshow() {
+    /* Read the stage before the list widens back out, so leaving the projector
+       on Thursday's flyer leaves the page on it too. */
+    var showing = current();
     state.slideshow = false;
+    setActiveTo(showing);
     render();
     restoreFocus();
     try {
@@ -3543,17 +3635,18 @@
   function timerRunning() {
     if (document.hidden) return false;
     if (state.detailId || state.submitOpen || state.reviewOpen) return false;
-    return visible().length > 1;
+    return stageList().length > 1;
   }
 
   function tick() {
+    if (state.slideshow) projectorUpkeep();
     if (!timerRunning()) return;
 
     var secs = C.CONFIG.slideSeconds;
     var next = state.t + 0.2 / secs;
     if (next >= 1) {
       state.t = 0;
-      state.active = (state.active + 1) % Math.max(1, visible().length);
+      state.active = (state.active + 1) % Math.max(1, stageList().length);
       renderShowcase();
       scrollActiveIntoView();
     } else {
