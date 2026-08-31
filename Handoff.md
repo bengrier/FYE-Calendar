@@ -346,11 +346,49 @@ than they did:
 3. **Decide whether the address should be personal.** A CSU-owned hostname
    pointed at the same Pages project would cost nothing technically — it is one
    CNAME — and would take the domain out of the chain entirely.
+
+   **This stopped being hypothetical on 2026-08-21** — see below. It has since
+   cleared, but the reason it happened has not gone away.
 4. **Write down where the accounts are** and who holds them, somewhere the
    office looks — not only in this file.
 
 None of this blocked deployment. It is what stops a working calendar from having
 a single person as its only dependency.
+
+### CSU's own filtering blocked the calendar for ten days
+
+**2026-08-21 to 2026-08-31.** For ten days the calendar was unreachable from
+CSU networks — which is to say, unreachable from the only place it is for. The
+site was up the whole time, Cloudflare was serving it, and every check from
+off-campus passed. It was blocked on the way in.
+
+Two layers, both keyed to the hostname rather than to the address:
+
+- **DNS.** CSU resolvers (129.82.103.79 and its siblings on CSUNET) answered
+  `calendar.fyetools.com` with 65.52.200.44, a dead address in a Microsoft
+  netblock. The authoritative answer was 172.66.47.82.
+- **TLS.** Bypassing DNS and connecting straight to 172.66.47.82 completed the
+  TCP handshake and then died during the ClientHello — `curl: (35)`, SNI-based
+  RST injection. So fixing only the DNS layer would have left the site reset at
+  TLS, looking fixed and still failing.
+
+`fye-calendar.pages.dev` reached the same Cloudflare IPs and worked fine
+throughout, which is what proved the block was on the hostname and not on the
+address, the route or the host. The likely trigger was that `fyetools.com` was
+registered on 2026-07-31 — a newly-registered-domain policy, applied to a
+domain with nothing about it to categorise.
+
+**Cleared as of 2026-08-31**, verified from a machine on CSU DNS: querying
+129.82.103.79 directly now returns the authoritative Cloudflare answer, and
+HTTPS to the custom domain returns 200 rather than resetting. Both layers.
+
+The thing to take from this is not the ten days. It is that a hostname on a
+personal domain with no CSU affiliation is a hostname CSU's own filtering has
+no reason to trust, and nothing about that has changed — the domain is still
+five weeks old, still personal, still uncategorised by whoever CSU actually
+buys filtering from. It cleared once. Open item 3 above is the fix that stops
+it mattering a second time, and it is better motivated now than when it was
+written.
 
 ### Deployment is done
 
