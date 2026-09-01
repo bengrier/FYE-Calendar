@@ -77,7 +77,7 @@
   var state = {
     anchor: C.CONFIG.today,
     view: C.CONFIG.defaultView === "month" ? "month" : "week",
-    active: 0,          // index into visible(), the flyer on the stage
+    active: 0,          // index into stageList(), the flyer on the stage
     t: 0,               // 0..1 progress through the current slide
     selected: {},       // filter group key -> chosen tag
     query: "",          // free-text search, across every field a student reads
@@ -245,24 +245,21 @@
       .sort(byWhen);
   }
 
-  /* The running order the stage, the countdown and the reels all read from.
+  /* The running order the stage, the countdown and the reels read from, on
+     the page and on the projector alike: what is in view and still to come.
 
-     On the page it is simply what is in view, past events included — the same
-     list the grid draws, which greys Tuesday's talk rather than hiding it.
-
-     The projector is a different promise. It runs unattended in a lobby for
-     the whole week, and nobody walking past on Thursday needs Tuesday's
-     flyer — or this morning's, once it is over. So the slideshow shows only
-     what is still to come. */
+     A showcase is an offer, not a record. Nobody can go to Tuesday's talk on
+     Thursday, so cycling its flyer past them is at best a waste of the nine
+     seconds and at worst an invitation to something that is over. The grid
+     below is the record, and it still draws the whole week — greyed where it
+     has been, which is the right way to show a week you are looking at. */
   function stageList() {
-    var vis = visible();
-    return state.slideshow ? vis.filter(stillToCome) : vis;
+    return visible().filter(stillToCome);
   }
 
   /* Still to come: a later day, or today and not yet finished. The end comes
      out of the event's own prose, the same place the calendar file reads it
-     from, so an event leaves the projector when it ends rather than at
-     midnight. */
+     from, so an event leaves the stage when it ends rather than at midnight. */
   function stillToCome(ev) {
     if (ev.date !== C.CONFIG.today) return ev.date > C.CONFIG.today;
     var now = new Date();
@@ -291,7 +288,7 @@
      passed. */
   function nextUpcoming() {
     return matchesEverywhere().filter(function (e) {
-      return state.slideshow ? stillToCome(e) : e.date >= C.CONFIG.today;
+      return stillToCome(e);
     })[0] || null;
   }
 
@@ -531,8 +528,9 @@
     if (at === -1) return;
     var next = vis[((at + dir) % vis.length + vis.length) % vis.length];
     state.detailId = next.id;
-    state.active = vis.indexOf(next);
-    state.t = 0;
+    /* The modal steps through the whole week, stage or no stage, so the event
+       it lands on may be one the showcase has already dropped. */
+    setActiveTo(next);
     render();
   }
 
@@ -607,14 +605,17 @@
     var upcoming = nextUpcoming();
     var elsewhere = narrowed ? matchesEverywhere().length : 0;
 
-    var line = narrowed
-      ? (state.query.trim()
-          ? "Nothing here matches “" + state.query.trim() + "”."
-          : "Nothing here matches that filter.")
-      /* "Nothing scheduled" would be a lie on the projector, where the week
-         may well have been full and simply be over. */
-      : (state.slideshow ? "Nothing left this " : "Nothing scheduled this ") +
-        (state.view === "month" ? "month" : "week") + ".";
+    /* Three ways for the stage to be empty and three different things to say.
+       The view had events and they have all been and gone — which the grid
+       below is still showing, so "nothing scheduled" would read as a bug.
+       Or the filter matched nothing. Or nobody booked the week. */
+    var line = visible().length
+      ? "Nothing left this " + (state.view === "month" ? "month" : "week") + "."
+      : narrowed
+        ? (state.query.trim()
+            ? "Nothing here matches “" + state.query.trim() + "”."
+            : "Nothing here matches that filter.")
+        : "Nothing scheduled this " + (state.view === "month" ? "month" : "week") + ".";
 
     return el("div", { class: "stage-empty" }, [
       el("div", { class: "stage-empty__line", text: line }),
@@ -656,9 +657,10 @@
       ? cur.id
       : ["empty", state.view, state.anchor, state.query,
          JSON.stringify(state.selected),
-         /* The line differs between the page and the projector, so a stage
-            that empties on one must not keep the other's wording. */
-         state.slideshow,
+         /* "Nothing left" and "nothing scheduled" turn on whether the view
+            holds anything at all, so a week emptying as its last event ends
+            must not keep the wording from before it did. */
+         visible().length,
          /* The empty stage now also depends on whether the calendar has
             loaded, so leaving these out strands it on "Loading…" after the
             fetch fails — the same way leaving the anchor out once stranded it
@@ -699,9 +701,6 @@
   }
 
   function renderShowcase() {
-    /* One list feeds both reels. While the projector is up the page's own
-       reel behind it is painted from the future-only list too — it is under a
-       full-surface overlay and nobody can see it, and exiting repaints it. */
     var vis = stageList();
     var cur = current(vis);
     var activeIndex = Math.min(state.active, Math.max(0, vis.length - 1));
@@ -3452,9 +3451,6 @@
      ====================================================================== */
 
   var slideshowNode = null;
-  /* The ids on the stage last time the projector looked, so it can tell when
-     an event has dropped out from under the active index. */
-  var stageSignature = null;
 
   function renderSlideshow() {
     if (!state.slideshow) {
@@ -3513,62 +3509,10 @@
     overlays.appendChild(slideshowNode);
   }
 
-  /* Point the stage at a given event within whatever the running order now
-     is, falling back to the front when it is not in there. Starting or
-     stopping the projector rewrites that order, so the event has to be carried
-     across rather than its number: opening the slideshow on the third flyer of
-     the week must not land on whatever happens to be third once everything
-     past has been dropped. */
-  function setActiveTo(ev) {
-    var ids = stageList().map(function (e) { return e.id; });
-    var at = ev ? ids.indexOf(ev.id) : -1;
-    state.active = at > -1 ? at : 0;
-    state.t = 0;
-    stageSignature = ids.join("|");
-  }
-
-  /* Two things go stale on a screen nobody is touching, and nothing else
-     catches either. The day rolls over — the visibilitychange handler that
-     refreshes `today` never fires on a tab that is never hidden. And the event
-     on the stage ends — the slide timer stops on a one-event view, which is
-     exactly the view a projector is left in when the thing that just finished
-     was the last one of the day. */
-  function projectorUpkeep() {
-    var now = D.toIso(new Date());
-    if (now !== C.CONFIG.today) {
-      C.CONFIG.today = now;
-      /* The week has to move with the day, or a screen left up over the
-         weekend spends Monday looking at a week entirely behind it. */
-      state.anchor = now;
-      gridSignature = null;
-      stageSignature = null;
-      state.active = 0;
-      state.t = 0;
-      render();
-      return;
-    }
-
-    var ids = stageList().map(function (e) { return e.id; });
-    var signature = ids.join("|");
-    if (signature === stageSignature) return;
-
-    /* Whatever was on the stage is named by the old order, not the new one,
-       so read it out of the signature before overwriting it. */
-    var before = stageSignature ? stageSignature.split("|") : [];
-    var was = before[Math.min(state.active, before.length - 1)];
-    stageSignature = signature;
-
-    var at = ids.indexOf(was);
-    state.active = at > -1 ? at : 0;
-    state.t = 0;
-    renderShowcase();
-  }
-
   function startSlideshow() {
     if (!state.slideshow) focusBeforeOverlay = document.activeElement;
-    var showing = current();
     state.slideshow = true;
-    setActiveTo(showing);
+    state.t = 0;
     render();
     try {
       var p = document.documentElement.requestFullscreen();
@@ -3577,11 +3521,7 @@
   }
 
   function stopSlideshow() {
-    /* Read the stage before the list widens back out, so leaving the projector
-       on Thursday's flyer leaves the page on it too. */
-    var showing = current();
     state.slideshow = false;
-    setActiveTo(showing);
     render();
     restoreFocus();
     try {
@@ -3632,6 +3572,66 @@
      background tab burning a timer for nobody is pure waste.
      ====================================================================== */
 
+  /* The ids on the stage the last time anything looked, so a list that loses
+     an event out from under the active index can be noticed. */
+  var stageSignature = null;
+
+  /* Point the stage at a given event within whatever the running order now is,
+     falling back to the front when it is not in there — an event that has
+     finished is no longer on the stage to point at. */
+  function setActiveTo(ev) {
+    var ids = stageList().map(function (e) { return e.id; });
+    var at = ev ? ids.indexOf(ev.id) : -1;
+    state.active = at > -1 ? at : 0;
+    state.t = 0;
+    stageSignature = ids.join("|");
+  }
+
+  /* Two things go stale on a page nobody is touching, and nothing else catches
+     either.
+
+     The day rolls over: the visibilitychange handler that refreshes `today`
+     only fires on a tab that gets hidden and come back to, which a lobby
+     screen never is and an open browser tab may not be all day.
+
+     And the event on the stage ends. The slide timer below stops on a
+     one-event view — exactly the view left behind when the thing that just
+     finished was the last one of the day — so without this the stage would
+     hold that flyer until somebody reloaded. */
+  function stageUpkeep() {
+    var now = D.toIso(new Date());
+    if (now !== C.CONFIG.today) {
+      C.CONFIG.today = now;
+      /* A projector has to be carried to the new week or it spends Monday
+         looking at a week entirely behind it. A page does not: pulling the
+         week out from under somebody who is reading it would be worse than a
+         date label that is a few seconds stale, and their next click fixes
+         it. */
+      if (state.slideshow) state.anchor = now;
+      gridSignature = null;
+      stageSignature = null;
+      state.active = 0;
+      state.t = 0;
+      render();
+      return;
+    }
+
+    var ids = stageList().map(function (e) { return e.id; });
+    var signature = ids.join("|");
+    if (signature === stageSignature) return;
+
+    /* Whatever was on the stage is named by the old order, not the new one,
+       so read it out of the signature before overwriting it. */
+    var before = stageSignature ? stageSignature.split("|") : [];
+    var was = before[Math.min(state.active, before.length - 1)];
+    stageSignature = signature;
+
+    var at = ids.indexOf(was);
+    state.active = at > -1 ? at : 0;
+    state.t = 0;
+    renderShowcase();
+  }
+
   function timerRunning() {
     if (document.hidden) return false;
     if (state.detailId || state.submitOpen || state.reviewOpen) return false;
@@ -3639,7 +3639,7 @@
   }
 
   function tick() {
-    if (state.slideshow) projectorUpkeep();
+    stageUpkeep();
     if (!timerRunning()) return;
 
     var secs = C.CONFIG.slideSeconds;
