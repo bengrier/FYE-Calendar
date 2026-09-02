@@ -95,6 +95,9 @@ split is the point of the directory: with the repo root as the output,
   content.
 - `public/js/dates.js` — Monday-first, whole-day, local-time date helpers.
 - `public/js/ics.js` — iCalendar export.
+- `public/js/metrics.js` — posts one usage data point to `/api/metric`. Sends
+  and nothing else; what may be recorded is decided on the server. See
+  [Analytics](#analytics).
 - `public/js/app.js` — state, derived views, and targeted rendering.
 - `public/js/pdf-bridge.mjs` — the first page of an uploaded PDF, drawn onto a
   canvas so the calendar has something it can display. The only file that knows
@@ -110,6 +113,8 @@ split is the point of the directory: with the repo root as the output,
 - `functions/api/` — the API. `functions/api/admin/` is behind Cloudflare Access.
 - `functions/_lib/` — shared server code. A leading underscore means the
   directory is not routed, so nothing in it is reachable as a URL.
+  `functions/_lib/metrics.js` holds the analytics schema and is the one place
+  that decides what may be recorded.
 - `schema.sql`, `seed.sql` — the database and the placeholder content.
 
 ## Submitting an event
@@ -597,6 +602,144 @@ repo on any Cloudflare account:
 
 Steps 1–4 restore the calendar students read. Step 5 restores the reviewers'
 ability to approve anything.
+
+## Analytics
+
+Two systems, because neither one is enough on its own.
+
+**Cloudflare Web Analytics** — page views, referrers, countries, browsers, Core
+Web Vitals. One `<script>` at the bottom of `public/index.html`, read in the
+Cloudflare dashboard under Web Analytics. Cookieless, and nothing it stores
+identifies a person.
+
+**The calendar's own metrics** — which events get opened, what gets added to a
+calendar, which filters get used, whether the slideshow ever runs. Written by
+the Functions to Workers Analytics Engine and read back with SQL. The schema is
+documented at the top of `functions/_lib/metrics.js`, which is the only place
+that decides what may be recorded.
+
+The reason there are two is that the first one can be switched off by people
+who are not us. Its beacon is a third-party script from
+`static.cloudflareinsights.com`: ad blockers stop it, Brave stops it, and CSU's
+own filtering stopped this whole domain for ten days in August. The second is
+same-origin — nothing between a student and the calendar can drop it without
+dropping the calendar too.
+
+The usual way to avoid that, letting Cloudflare inject the beacon at the edge so
+it reports to `/cdn-cgi/rum` on our own hostname, needs a proxied zone. This
+deployment has none, which is the same absence that keeps Access off the public
+hostname and made rate limiting into code. See
+[Why there are two addresses](#why-there-are-two-addresses).
+
+**Read the page-view figure as a floor, never a count.** How far under the truth
+it runs is roughly the gap between `page` and `events_api_miss` below.
+
+### What is recorded, and what is not
+
+No IP address, no user agent, no cookie, and no session or visitor id — nothing
+joins two data points into one person, by construction rather than by policy.
+Searching records **how many events matched and not a character of what was
+typed**: a search box on a public site collects whatever somebody puts in it,
+and that is not a thing to keep for three months. If the office decides it wants
+the terms, that is a decision to make out loud, and the change is in
+`functions/_lib/metrics.js`.
+
+Event ids and organisation names are recorded. Both are already public — they
+are on the calendar and in the URL of every shared link. A submission records
+the organisation and the repeat rule; the submitter's name and address stay in
+D1, where a reviewer needs them.
+
+| Metric | Written by | Means |
+| --- | --- | --- |
+| `page` | the page | the calendar loaded. `surface` says which overlay it opened on |
+| `event_open` | the page | an event was opened. `surface` is `grid`, `step` or `link` |
+| `ics_one` | the page | one event added to somebody's calendar |
+| `ics_view` | the page | everything in view downloaded; `value` is how many |
+| `filter` | the page | a filter was set. `subject` is the value, `detail` the filter |
+| `search` | the page | a search ran; `value` is how many matched, `0` being the interesting case |
+| `slideshow` | the page | the projector surface was started |
+| `flyer_open` | the page | artwork opened full size |
+| `submit_open` | the page | the submit form was opened |
+| `events_api_miss` | the server | `GET /api/events` missed the edge cache |
+| `submitted` | the server | a submission reached the queue |
+
+The last two cannot be sent by a browser: `functions/api/metric.js` accepts only
+the names marked `client` in `NAMES`, so nobody can post submissions that never
+happened.
+
+`events_api_miss` is **not** a visit count and is named so it cannot be mistaken
+for one. That response is cached at the edge for a minute, so a busy minute is
+many people and one data point. What makes it worth having is that nothing can
+block it: if `page` comes in well under it, that is ad blockers, not a quiet
+week.
+
+### Reading the numbers
+
+Analytics Engine is queried over HTTP with SQL. You need an API token with
+**Account Analytics: Read** — create it under My Profile → API Tokens — and the
+account id, which is on the right of the Cloudflare dashboard's Workers & Pages
+page.
+
+```bash
+export CF_ACCOUNT_ID=... CF_ANALYTICS_TOKEN=...
+```
+
+```bash
+curl -s "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/analytics_engine/sql" -H "Authorization: Bearer $CF_ANALYTICS_TOKEN" -d "SELECT blob1 AS metric, SUM(_sample_interval * double1) AS n FROM fye_calendar WHERE timestamp > NOW() - INTERVAL '30' DAY GROUP BY metric ORDER BY n DESC"
+```
+
+**Never `COUNT(*)`.** Analytics Engine samples: one stored row can stand for
+many real ones, and `_sample_interval` is how many. `SUM(_sample_interval *
+double1)` is the honest total; counting rows undercounts silently, and worst on
+whatever is most popular.
+
+Which events people actually opened, last thirty days:
+
+```bash
+curl -s "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/analytics_engine/sql" -H "Authorization: Bearer $CF_ANALYTICS_TOKEN" -d "SELECT blob2 AS event, blob3 AS org, SUM(_sample_interval * double1) AS opens FROM fye_calendar WHERE blob1 = 'event_open' AND timestamp > NOW() - INTERVAL '30' DAY GROUP BY event, org ORDER BY opens DESC LIMIT 20"
+```
+
+Which organisations get taken away, rather than merely read — the strongest
+signal the calendar produces:
+
+```bash
+curl -s "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/analytics_engine/sql" -H "Authorization: Bearer $CF_ANALYTICS_TOKEN" -d "SELECT blob3 AS org, SUM(_sample_interval * double1) AS added FROM fye_calendar WHERE blob1 = 'ics_one' AND timestamp > NOW() - INTERVAL '90' DAY GROUP BY org ORDER BY added DESC"
+```
+
+Searches that found nothing — people looking for something the calendar does not
+have:
+
+```bash
+curl -s "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/analytics_engine/sql" -H "Authorization: Bearer $CF_ANALYTICS_TOKEN" -d "SELECT SUM(_sample_interval * double1) AS empty_searches FROM fye_calendar WHERE blob1 = 'search' AND double2 = 0 AND timestamp > NOW() - INTERVAL '30' DAY"
+```
+
+How much of the page-view figure the blockers are taking:
+
+```bash
+curl -s "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/analytics_engine/sql" -H "Authorization: Bearer $CF_ANALYTICS_TOKEN" -d "SELECT blob1 AS metric, SUM(_sample_interval * double1) AS n FROM fye_calendar WHERE blob1 IN ('page', 'events_api_miss') AND timestamp > NOW() - INTERVAL '7' DAY GROUP BY metric"
+```
+
+Students against the office — `blob5` is the hostname, and
+`fye-calendar.pages.dev` is where reviewers sign in:
+
+```bash
+curl -s "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/analytics_engine/sql" -H "Authorization: Bearer $CF_ANALYTICS_TOKEN" -d "SELECT blob5 AS host, SUM(_sample_interval * double1) AS n FROM fye_calendar WHERE timestamp > NOW() - INTERVAL '30' DAY GROUP BY host ORDER BY n DESC"
+```
+
+### Two things to know
+
+**Data is kept three months** and that is not adjustable. Anything the office
+wants to compare year on year has to be pulled out and saved before it ages out;
+nothing does that automatically today.
+
+**Locally, the Cloudflare beacon logs a CORS error to the console.** It is
+expected — the site token is registered to the real hostnames and not to
+`localhost` — and it means nothing is wrong. Everything else works under
+`wrangler pages dev`, and nothing a local run writes reaches the real dataset,
+so testing cannot put fake traffic in the numbers.
+
+The free allowance is a hundred thousand data points a day and ten thousand
+queries; this calendar is nowhere near either.
 
 ## The seeded events are placeholders
 

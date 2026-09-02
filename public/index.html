@@ -139,6 +139,54 @@
 <script src="js/data.js"></script>
 <script src="js/store.js"></script>
 <script src="js/ics.js"></script>
+<script src="js/metrics.js"></script>
 <script src="js/app.js"></script>
+
+<!-- Cloudflare Web Analytics: page views, referrers, countries, browsers.
+     Cookieless, and it stores nothing that identifies a person.
+
+     The token is not a credential. It is a public site identifier that ships in
+     the HTML of every page it measures, the same way ACCESS_AUD in wrangler.toml
+     is a public identifier — anybody who views source has it. What it grants is
+     the ability to send this site fake page views, not the ability to read the
+     numbers.
+
+     Two things to know before trusting what the dashboard says.
+
+     It is loaded from static.cloudflareinsights.com, a third-party host, because
+     the automatic same-origin version of this beacon is only available to a
+     proxied zone and this domain is not one. So it is blocked by ad blockers,
+     by Brave and by the DuckDuckGo extension, and it would have been blocked
+     outright during the ten days CSU filtered this site. When it is blocked the
+     page is unaffected and the numbers simply stop — silently. Treat the figure
+     as a floor, never a count.
+
+     What it cannot be blocked out of is /api/metric, which is same-origin and
+     answers the questions this does not: which events people open, what gets
+     added to a calendar, which filters get used. See public/js/metrics.js.
+
+     Added by a line of script rather than written as a plain <script src>,
+     which is the only change from the snippet Cloudflare hands out, and it buys
+     one thing: silence on localhost. The site token is registered to the two
+     real hostnames, so on a dev machine every report is refused by CORS — and
+     the beacon reports on load and again on each web vital, which was around
+     thirty console errors per page. A wall of red in local development is how
+     people learn to ignore the console.
+
+     If anything about this ever looks suspect, the plain tag is the fallback
+     and it is one edit:
+
+       <script type="module" src="https://static.cloudflareinsights.com/beacon.min.js"
+               data-cf-beacon='{"token": "..."}'></script> -->
+<script>
+(function () {
+  if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) return;
+  var s = document.createElement("script");
+  s.type = "module";
+  s.src = "https://static.cloudflareinsights.com/beacon.min.js";
+  s.setAttribute("data-cf-beacon", '{"token": "b77cc80dc1944b30be25206186dd0115"}');
+  document.head.appendChild(s);
+})();
+</script>
 </body>
 </html>

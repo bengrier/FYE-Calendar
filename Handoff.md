@@ -964,6 +964,64 @@ and one approved test event which does not. Both are in
 Small changes made against the live site. Each one is deployed and confirmed
 working; the passes above are left as the record of the day they describe.
 
+### 2026-09-01 — the calendar can be measured
+
+Until now there were no numbers at all. Nobody could say whether anyone used the
+slideshow, whether a flyer was worth chasing, or whether the address students
+were given was reaching them — which mattered most during the ten days CSU
+filtered the site, when the only evidence that it was down was somebody
+mentioning it.
+
+The obvious answer, Cloudflare's per-domain Traffic dashboard, is a zone feature.
+This is the fourth time that absence has decided a design here, after Access on
+the public hostname, rate limiting, and edge beacon injection. So there are two
+systems instead, and the split is the point:
+
+- **Cloudflare Web Analytics**, one script tag in `public/index.html`. Page
+  views, referrers, countries, browsers. Free, cookieless, and about fifteen
+  minutes of work.
+- **The calendar's own metrics**, in `functions/_lib/metrics.js`,
+  `functions/api/metric.js` and `public/js/metrics.js`, written to Workers
+  Analytics Engine and read back with SQL. Nine things the page reports and two
+  the server does. Written up in README under
+  [Analytics](README.md#analytics).
+
+**The second exists because the first can be switched off by people who are not
+us.** The beacon is a third-party script from `static.cloudflareinsights.com`:
+ad blockers stop it, Brave stops it, and CSU's filtering would have stopped it
+outright in August, silently — the page keeps working and the numbers just go
+to zero. Everything in the second system is same-origin, so nothing can drop it
+without dropping the calendar too. Read the page-view figure as a floor.
+
+Three decisions worth knowing before changing any of it:
+
+- **The blob positions in `functions/_lib/metrics.js` are the schema.**
+  Analytics Engine has no column names — SQL addresses `blob1`, `blob2`,
+  `double1` by position — and stored rows cannot be migrated. Inserting a field
+  in the middle silently reinterprets three months of history. Add to the end.
+- **No search text is recorded**, only how many events matched. A zero is the
+  useful number anyway: somebody looking for something the calendar does not
+  have. Wanting the terms is a reasonable thing for the office to want, and it
+  is a decision for them to make out loud rather than a default to drift into.
+  Nothing else identifies anybody either: no IP, no user agent, no cookie, no
+  visitor id, so no two data points can be joined into one person.
+- **`events_api_miss` is not a visit count**, and is named so it cannot be read
+  as one — `/api/events` is edge-cached for a minute, so a busy minute is many
+  people and one data point. It is kept because it is the one count no blocker
+  can take away, which makes the gap between it and `page` a measure of how much
+  the blockers are taking.
+
+`/api/metric` is public, unauthenticated and deliberately unlimited, unlike
+`/api/submissions`. The limiter there counts in D1 because a human reads every
+row it protects. Nothing here is read by a human or kept past three months, and
+counting attempts in D1 would mean a database write on every page view to
+prevent a cost that does not exist. The defence is that only the nine names
+marked `client` are accepted at all.
+
+Three months is the retention and it is not adjustable, so anything the office
+wants to compare year on year has to be pulled out before it ages out. Nothing
+does that today.
+
 ### 2026-08-11 — the calendar collects its own rubbish
 
 Nothing ever left this calendar. Events accumulated, and under each one that had

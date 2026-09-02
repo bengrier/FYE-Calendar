@@ -30,6 +30,40 @@ database_id = "1de35f80-ffcd-4afa-b5de-c8570b3f3053"
 binding = "FLYERS"
 bucket_name = "fye-calendar-flyers"
 
+# Where the calendar's own usage numbers go. Workers Analytics Engine: the
+# Functions write data points, and they are read back with SQL over the API.
+#
+# This exists because the analytics Cloudflare would normally give a site — the
+# per-domain Traffic dashboard — is a zone feature, and this deployment has no
+# zone, for the same reason Access cannot cover the public hostname and rate
+# limiting had to become code. `fyetools.com` is registered at Hover.
+#
+# The Web Analytics beacon in public/index.html covers page views, and is a
+# third-party script that ad blockers and campus filtering can silence without
+# any sign that they have. This dataset is written from our own Functions on our
+# own origin, so it cannot be blocked, and it answers questions the beacon
+# cannot: which events get opened, what gets added to a calendar, which filters
+# people actually use.
+#
+# Nothing written here identifies a person. There is no IP address, no user
+# agent, no session or visitor id, and no search text — see the schema at the
+# top of functions/_lib/metrics.js, which is the one place any of it is decided.
+#
+# Unlike D1 and R2 there is nothing to create first: the dataset appears the
+# first time something is written to it. Nothing needs to exist for local
+# development either. `wrangler pages dev` binds this locally and nothing it
+# writes leaves the machine or reaches the real dataset, so a local run cannot
+# put test traffic in the numbers; and the helper treats an absent or inert
+# binding as "do not record", so a version of wrangler that does not offer one
+# is not an error either.
+#
+# Data is kept three months, which is the same horizon as EVENT_RETENTION_MONTHS
+# below and is not a coincidence worth relying on — Analytics Engine's retention
+# is not configurable.
+[[analytics_engine_datasets]]
+binding = "ANALYTICS"
+dataset = "fye_calendar"
+
 [vars]
 # Cloudflare Access gates /review and /api/admin/* at the edge; the Functions
 # verify the Access JWT as well, so a request that reaches them another way is

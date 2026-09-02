@@ -7,9 +7,19 @@
    half of one. */
 
 import { json, methodNotAllowed } from "../_lib/http.js";
+import { record } from "../_lib/metrics.js";
 
 export async function onRequest(context) {
   if (context.request.method !== "GET") return methodNotAllowed("GET");
+
+  /* Reaching here means the edge cache did not answer, so this counts cache
+     misses and not visits — the response below is cached for a minute, and a
+     busy minute is many people and one of these. It is recorded anyway, and
+     named for what it is, because it is the only count of this site nothing
+     can block: the page's own `page` metric and the Cloudflare beacon are both
+     browser-side and both stop at an ad blocker. A `page` figure well under
+     this one is the blockers, not a quiet week. */
+  record(context, "events_api_miss", { surface: "server" });
 
   var db = context.env.DB;
 

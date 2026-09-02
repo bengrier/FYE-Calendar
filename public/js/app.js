@@ -17,6 +17,10 @@
   var S = window.CalStore;   /* the live calendar: seed + everything since */
   var ICS = window.CalIcs;
   var SUB = window.CalSubmission; /* submissions encoded into shareable links */
+  /* Usage numbers, posted to /api/metric. The fallback is not paranoia about
+     the file being missing so much as about it being moved after app.js in
+     index.html: a counter must never be able to stop the calendar rendering. */
+  var M = window.CalMetrics || { track: function () {}, soon: function () {} };
 
   /* ======================================================================
      DOM helpers
@@ -395,6 +399,10 @@
   function setFilter(key, value) {
     if (value) state.selected[key] = value;
     else delete state.selected[key];
+    /* Only when one is set. Clearing a filter is somebody undoing a choice,
+       and counting it as a use of that filter would make the tags people
+       abandon look exactly as popular as the tags they keep. */
+    if (value) M.track("filter", { subject: value, detail: key, surface: "calendar" });
     state.active = 0;
     state.t = 0;
     render();
@@ -415,6 +423,20 @@
     state.active = 0;
     state.t = 0;
     render();
+
+    /* Counted after the render, so the number is the result of what was just
+       typed, and debounced, because this runs on every keystroke — "cookie"
+       is one search, not six. What is recorded is how many events matched and
+       not a character of the text: a zero here is somebody looking for
+       something the calendar does not have, which is the whole reason to
+       measure searching at all.
+
+       Calendar-wide rather than in view, for the same reason the empty state
+       offers to jump ahead: a search that finds nothing this week has not
+       found nothing. */
+    if (value.trim()) {
+      M.soon("search", { surface: "calendar", value: matchesEverywhere().length });
+    }
   }
 
   function goToDate(iso) {
@@ -487,6 +509,7 @@
       var found = S.eventById(id);
       if (found) {
         state.detailId = id;
+        noteOpen(id, "link");
         /* A link to an event has to land on the week that holds it. */
         if (found.date < D.toIso(range().from) || found.date > D.toIso(range().to)) {
           state.anchor = found.date;
@@ -508,9 +531,25 @@
     render();
   }
 
+  /* One event looked at, however it was reached. Three code paths put an id
+     into state.detailId — a card in the grid, the arrows inside the dialog,
+     and a #event/<id> link arriving or coming back through history — and all
+     three are a person reading an event, so all three count as one. `how`
+     records which, because "opened from a shared link" and "opened while
+     browsing the week" are different facts about an event.
+
+     Deliberately not folded into a setter that all three call: applyRoute
+     assigns state.detailId in the middle of clearing every other overlay, and
+     the one place that must not record is where it assigns null. */
+  function noteOpen(id, how) {
+    var ev = S.eventById(id);
+    M.track("event_open", { subject: id, detail: ev ? ev.org : "", surface: how });
+  }
+
   function openDetail(id) {
     if (!state.detailId) focusBeforeOverlay = document.activeElement;
     state.detailId = id;
+    noteOpen(id, "grid");
     render();
   }
 
@@ -528,6 +567,7 @@
     if (at === -1) return;
     var next = vis[((at + dir) % vis.length + vis.length) % vis.length];
     state.detailId = next.id;
+    noteOpen(next.id, "step");
     /* The modal steps through the whole week, stage or no stage, so the event
        it lands on may be one the showcase has already dropped. */
     setActiveTo(next);
@@ -930,6 +970,8 @@
   function downloadView() {
     var vis = visible();
     if (!ICS.download(vis, "fye-" + rangeLabel())) return;
+    /* After the download succeeded, not before it was asked for. */
+    M.track("ics_view", { surface: "calendar", detail: state.view, value: vis.length });
     toast(vis.length === 1 ? "1 event downloaded" : vis.length + " events downloaded");
   }
 
@@ -1093,7 +1135,14 @@
               target: "_blank",
               rel: "noopener",
               title: "Open the flyer page",
-              "aria-label": "Open the flyer page for " + ev.title
+              "aria-label": "Open the flyer page for " + ev.title,
+              /* Which artwork is worth the office's time to chase. Recorded
+                 here rather than in the Function that serves the bytes,
+                 because that response is cached immutable for a year and so
+                 sees the first person to look and nobody after them. */
+              onClick: function () {
+                M.track("flyer_open", { subject: ev.id, detail: ev.org, surface: "detail" });
+              }
             }, flyerNode(ev, "stage"))
           : flyerNode(ev, "stage")),
       el("div", { class: "modal__info" }, [
@@ -1126,7 +1175,11 @@
                a file arrived. */
             type: "button", class: "btn-primary", text: "Add to my calendar (.ics)",
             onClick: function () {
-              if (ICS.download([ev], ev.title)) toast("Calendar file downloaded");
+              if (!ICS.download([ev], ev.title)) return;
+              /* The strongest signal the calendar produces: somebody did not
+                 just read about an event, they took it away with them. */
+              M.track("ics_one", { subject: ev.id, detail: ev.org, surface: "detail" });
+              toast("Calendar file downloaded");
             }
           }),
           el("button", { type: "button", class: "btn-secondary", onClick: closeDetail, text: "Close" })
@@ -1801,7 +1854,14 @@
   }
 
   function openSubmit() {
-    if (!state.submitOpen) focusBeforeOverlay = document.activeElement;
+    if (!state.submitOpen) {
+      focusBeforeOverlay = document.activeElement;
+      /* Against `submitted`, which the server writes when a submission is
+         accepted, this is the abandonment rate on the one form students are
+         asked to fill in. Inside the guard so that re-opening an overlay that
+         is already open counts once, the same way the focus is saved once. */
+      M.track("submit_open", { surface: "submit" });
+    }
     state.submitOpen = true;
     state.submitted = false;
     state.errors = {};
@@ -3510,7 +3570,13 @@
   }
 
   function startSlideshow() {
-    if (!state.slideshow) focusBeforeOverlay = document.activeElement;
+    if (!state.slideshow) {
+      focusBeforeOverlay = document.activeElement;
+      /* The projector surface leaves no other trace at all: it is one page
+         that never navigates, so without this there is no way to know whether
+         a lobby screen has ever run it. */
+      M.track("slideshow", { surface: "slideshow", detail: state.view });
+    }
     state.slideshow = true;
     state.t = 0;
     render();
@@ -3757,7 +3823,19 @@
        empty grid that looks like a week with nothing in it. */
     S.onChange(function () { gridSignature = null; render(); });
 
+    /* After applyRoute, so `detail` says which surface the page actually
+       opened on — a #slideshow or #event link is not a visit to the calendar.
+       This is the one metric the Cloudflare beacon also counts, on purpose:
+       the gap between the two is how much the ad blockers are taking. */
     applyRoute();
+    M.track("page", {
+      surface: state.slideshow ? "slideshow"
+        : state.reviewOpen ? "review"
+        : state.submitOpen ? "submit"
+        : "calendar",
+      detail: state.view
+    });
+
     S.hydrate(state.reviewOpen).catch(function () {
       /* Already reported through the store's state and painted by render();
          swallowed here so it does not reach the console as unhandled. */

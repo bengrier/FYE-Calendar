@@ -15,6 +15,7 @@
 import { json, fail, methodNotAllowed, readJson, uid } from "../_lib/http.js";
 import { validateSubmission } from "../_lib/submission.js";
 import { sweepInBackground } from "../_lib/retention.js";
+import { record } from "../_lib/metrics.js";
 
 var WINDOW_MS = 60 * 60 * 1000;
 var LIMIT = 50;
@@ -125,6 +126,23 @@ export async function onRequest(context) {
   }
 
   await db.batch(statements);
+
+  /* After the batch, so this counts submissions that are actually in the queue
+     rather than ones that were attempted. The queue table remains the record
+     of what was submitted; this puts submissions on the same timeline as the
+     browsing that led to them, and against `submit_open` it is how often
+     opening the form ends in sending something.
+
+     The organisation, and nothing about the student: `by_name` and `by_email`
+     are in D1 where a reviewer needs them, and have no business in a metrics
+     dataset that answers questions about the calendar. */
+  record(context, "submitted", {
+    subject: sub.org,
+    /* The repeat rule as the validator leaves it — "weekly", "biweekly", or
+       empty for a single date, which reads better in a query as "one-off". */
+    detail: sub.repeat || "one-off",
+    surface: "server"
+  });
 
   /* Somebody adding an event is the moment the calendar grows, so it is the
      moment to take out what has aged off the other end. It runs after this
