@@ -1,0 +1,113 @@
+# Ask the calendar's own metrics a question, from the Actions tab.
+#
+# Analytics Engine is only readable over the SQL API, which needs an API token.
+# The one this repository already holds is the obvious candidate and running the
+# query here rather than on somebody's laptop is the point: the token stays in
+# Settings → Secrets, where it already is, instead of being copied onto a
+# machine, into a shell history, or into a chat window.
+#
+# ── One permission has to be added before this works ─────────────────────────
+#
+# CLOUDFLARE_API_TOKEN was created for the deploy and the backup, and carries
+# exactly what those two need:
+#
+#   Cloudflare Pages   → Edit
+#   D1                 → Edit
+#   Workers R2 Storage → Read
+#
+# Reading Analytics Engine needs a fourth, and without it every run here fails
+# with an authentication error rather than an empty result:
+#
+#   Account Analytics  → Read
+#
+# Edit the existing token at My Profile → API Tokens rather than making a second
+# one. Three workflows sharing one token is already the arrangement, and a token
+# nobody can account for is worse than a token with one more permission on it.
+#
+# ── This log is public ───────────────────────────────────────────────────────
+#
+# This repository is PUBLIC, so whatever a run prints is readable by anyone.
+# That is fine for what the dataset holds today: metric names, event ids,
+# organisation names, hostnames and countries — all of it already on the
+# calendar or in the URL of a shared link. There is no IP address, no user
+# agent, no visitor id and no search text in there.
+#
+# The last of those is the one to watch. If the office ever decides it wants the
+# text people type into the search box — the decision flagged in
+# functions/_lib/metrics.js — then this workflow becomes a place where it is
+# printed into a public log, and it has to become private, redacted, or gone.
+
+name: Analytics query
+
+on:
+  workflow_dispatch:
+    inputs:
+      query:
+        description: "SQL to run against the fye_calendar dataset"
+        required: false
+        default: >-
+          SELECT blob1 AS metric, SUM(_sample_interval * double1) AS n
+          FROM fye_calendar
+          WHERE timestamp > NOW() - INTERVAL '30' DAY
+          GROUP BY metric ORDER BY n DESC
+
+jobs:
+  query:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+
+    steps:
+      # Proves the token before the real question is asked. This query touches
+      # no dataset, so it separates "the token cannot read analytics" from "the
+      # dataset is empty" — two failures that otherwise look identical from the
+      # outside, and the first of which is the one that actually happens.
+      - name: Check the token can read analytics
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          out=$(curl -sS -w '\n%{http_code}' \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/analytics_engine/sql" \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            --data "SELECT 1 AS ok")
+          code=$(printf '%s' "$out" | tail -n1)
+          body=$(printf '%s' "$out" | sed '$d')
+          echo "HTTP $code"
+          echo "$body"
+          if [ "$code" != "200" ]; then
+            echo "::error::The token cannot read Analytics Engine. Add Account Analytics → Read to CLOUDFLARE_API_TOKEN — see the comment at the top of this file."
+            exit 1
+          fi
+
+      - name: Run the query
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          QUERY: ${{ inputs.query }}
+        run: |
+          set -euo pipefail
+          echo "Query:"
+          echo "$QUERY"
+          echo
+          curl -sS \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/analytics_engine/sql" \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            --data "$QUERY" | python3 -m json.tool
+
+      # An empty `data` array above is not necessarily a problem: it is what a
+      # dataset that has never been written to looks like, and also what a
+      # correct query over a quiet half hour looks like. This says which.
+      - name: How much is in the dataset at all
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          curl -sS \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/analytics_engine/sql" \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            --data "SELECT SUM(_sample_interval) AS data_points, MIN(timestamp) AS first_seen, MAX(timestamp) AS last_seen FROM fye_calendar" \
+            | python3 -m json.tool
