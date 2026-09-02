@@ -460,11 +460,24 @@
 
   var applyingRoute = false;
 
+  /* An #event/<id> that arrived before the calendar did. Reads from the store
+     are synchronous but the store is empty until the first hydrate lands, so a
+     link opened cold names an event nothing can look up yet. The id waits here
+     until the events arrive; `resolvePendingEvent` is where it opens. */
+  var pendingEventId = null;
+
   function hashForState() {
     if (state.detailId) return "#event/" + encodeURIComponent(state.detailId);
     if (state.reviewOpen) return "#review";
     if (state.submitOpen) return "#submit";
     if (state.slideshow) return "#slideshow";
+    /* A link still waiting for the calendar to load. The URL has to go on
+       naming it: returning "" here is what used to erase the fragment on the
+       first render, taking the link with it — after which even a reload could
+       not recover the event, because the address no longer said which one.
+
+       Last, so that anything the person does while waiting outranks it. */
+    if (pendingEventId) return "#event/" + encodeURIComponent(pendingEventId);
     return "";
   }
 
@@ -503,18 +516,15 @@
     state.submitOpen = false;
     state.reviewOpen = false;
     state.slideshow = false;
+    pendingEventId = null;
 
     if (event) {
       var id = decodeURIComponent(event[1]);
-      var found = S.eventById(id);
-      if (found) {
-        state.detailId = id;
-        noteOpen(id, "link");
-        /* A link to an event has to land on the week that holds it. */
-        if (found.date < D.toIso(range().from) || found.date > D.toIso(range().to)) {
-          state.anchor = found.date;
-        }
-      }
+      /* Held only while the calendar has not loaded. Once it has, an id that
+         does not resolve is an event that is genuinely not there — deleted, or
+         swept out by retention — and waiting for it would mean waiting
+         forever. */
+      if (!openFromLink(id) && !S.state().loaded) pendingEventId = id;
     } else if (lower === "#review") {
       state.reviewOpen = true;
       state.note = "";
@@ -544,6 +554,46 @@
   function noteOpen(id, how) {
     var ev = S.eventById(id);
     M.track("event_open", { subject: id, detail: ev ? ev.org : "", surface: how });
+  }
+
+  /* Open the event a #event/<id> URL names, and say whether it could. Shared
+     by the two moments a link can be acted on: when it arrives, and — if the
+     calendar had not loaded yet — when the events do. */
+  function openFromLink(id) {
+    var found = S.eventById(id);
+    if (!found) return false;
+
+    state.detailId = id;
+    noteOpen(id, "link");
+
+    /* A link to an event has to land on the week that holds it. */
+    if (found.date < D.toIso(range().from) || found.date > D.toIso(range().to)) {
+      state.anchor = found.date;
+    }
+    return true;
+  }
+
+  /* The other half of the same link, run whenever the store changes. Until
+     this existed, a #event/<id> link opened cold showed the plain calendar:
+     applyRoute ran before the first hydrate, found nothing, and syncHash then
+     stripped the fragment. Back and forward were unaffected — by then the
+     cache is warm — which is why sending somebody a link was the only way to
+     see it. */
+  function resolvePendingEvent() {
+    if (!pendingEventId || !S.state().loaded) return;
+
+    var id = pendingEventId;
+    pendingEventId = null;
+
+    /* Whatever the person did while waiting outranks the link they arrived on.
+       Opening the submit form during a slow load should not have an event
+       dialog appear over it a moment later. */
+    if (overlayOpen()) return;
+
+    /* A link to an event that is no longer on the calendar opens nothing, and
+       the next render drops the fragment — which is the honest outcome, rather
+       than an address that goes on naming an event that is not there. */
+    openFromLink(id);
   }
 
   function openDetail(id) {
@@ -3821,7 +3871,14 @@
     /* The calendar is empty until the first hydrate lands, so the page paints
        its loading state, fetches, and paints again — rather than flashing an
        empty grid that looks like a week with nothing in it. */
-    S.onChange(function () { gridSignature = null; render(); });
+    S.onChange(function () {
+      gridSignature = null;
+      /* Before the render, so the first paint after the events land is already
+         the one with the linked event open, rather than a frame of plain
+         calendar followed by a dialog appearing over it. */
+      resolvePendingEvent();
+      render();
+    });
 
     /* After applyRoute, so `detail` says which surface the page actually
        opened on — a #slideshow or #event link is not a visit to the calendar.
@@ -3832,6 +3889,9 @@
       surface: state.slideshow ? "slideshow"
         : state.reviewOpen ? "review"
         : state.submitOpen ? "submit"
+        /* An event link counts as arriving on an event even though the dialog
+           cannot open until the events land a moment later. */
+        : (state.detailId || pendingEventId) ? "event"
         : "calendar",
       detail: state.view
     });

@@ -964,6 +964,50 @@ and one approved test event which does not. Both are in
 Small changes made against the live site. Each one is deployed and confirmed
 working; the passes above are left as the record of the day they describe.
 
+### 2026-09-01 — shared event links did not work
+
+**Every `#event/<id>` link sent to somebody else opened the plain calendar.**
+Copy link has been in the detail dialog since the functionality pass, and the
+one thing it is for — sending an event to a friend — is the one case that never
+worked. It went unnoticed because it works perfectly for whoever produced the
+link: back and forward re-run `applyRoute` against a cache that is already full.
+
+`start()` called `applyRoute()` and only then `S.hydrate()`. Reads from the
+store are synchronous, but the store is empty until the first hydrate lands, so
+`S.eventById(id)` answered null, the `if (found)` branch never ran, and
+`state.detailId` stayed null. The render that followed then called `syncHash`,
+which saw no detail state and rewrote the URL **without the fragment** — so the
+address stopped naming the event and even a reload could not recover it. Two
+failures compounding: one that did not open the event, and one that destroyed
+the evidence of which event it was.
+
+The fix keeps the routing rule the file is built on — the hash is written by the
+state and read only through `applyRoute` — by giving the state somewhere to put
+a link it cannot honour yet. `applyRoute` holds the id in `pendingEventId` when
+the calendar has not loaded; `hashForState` returns it last, so the URL goes on
+naming the event while it waits; and `resolvePendingEvent`, called from the
+store's `onChange` before the render, opens it the moment the events arrive.
+
+Three details that are deliberate:
+
+- **The id is only held while the store has not loaded.** Once it has, an id
+  that does not resolve is an event that is genuinely gone — deleted, or swept
+  out by retention — and the fragment is dropped rather than waited on forever.
+- **`pendingEventId` is last in `hashForState`.** Anything the person does
+  during a slow load outranks the link they arrived on, and
+  `resolvePendingEvent` bails on `overlayOpen()` for the same reason: opening
+  the submit form should not have an event dialog appear over it a moment later.
+- **Resolution happens before the render, not after.** The first paint that has
+  the events in it is already the one with the dialog open, rather than a frame
+  of plain calendar with the event arriving on top of it.
+
+Verified against `wrangler pages dev`: a cold `?cold=1#event/canoe` opens the
+event and keeps its fragment; a link to an event in another week moves the
+calendar to that week; a link to an id that does not exist falls back to the
+calendar and drops the fragment; `#submit` and `#slideshow` are unaffected; and
+clicking a card still pushes exactly one history entry, with Back closing the
+dialog rather than leaving the site.
+
 ### 2026-09-01 — the calendar can be measured
 
 Until now there were no numbers at all. Nobody could say whether anyone used the
