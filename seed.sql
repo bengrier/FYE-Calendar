@@ -39,7 +39,6 @@ INSERT INTO tags (name, kind, approved) VALUES ('Afternoon', 'fixed', 1);
 INSERT INTO tags (name, kind, approved) VALUES ('Evening', 'fixed', 1);
 
 -- Approved custom tags, filterable for everyone.
-INSERT INTO tags (name, kind, approved) VALUES ('First years welcome', 'custom', 1);
 INSERT INTO tags (name, kind, approved) VALUES ('No experience needed', 'custom', 1);
 INSERT INTO tags (name, kind, approved) VALUES ('Hands-on build', 'custom', 1);
 INSERT INTO tags (name, kind, approved) VALUES ('Design-Build-Fly', 'custom', 1);
@@ -71,7 +70,6 @@ INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, 
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-14', 'All disciplines');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-14', 'Social');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-14', 'Free food');
-INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-14', 'First years welcome');
 INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, temporary, from_submission, created_at)
   VALUES ('aero-18', '2026-08-18', 14, '2:00 – 4:00 pm', 'Design-Build-Fly Weekly Build', 'AIAA · Ram Aero', 'Magellan Room', 'Ram Aero''s open build session for the AIAA Design-Build-Fly competition aircraft. First years welcome with no experience — you will be handed a task.', 'aiaa', 1, NULL, 1786396491313);
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('aero-18', 'Mechanical');
@@ -88,12 +86,10 @@ INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, 
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-21', 'All disciplines');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-21', 'Social');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-21', 'Free food');
-INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-21', 'First years welcome');
 INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, temporary, from_submission, created_at)
   VALUES ('swe', '2026-08-24', 16, '4:00 – 5:30 pm', 'Résumé Lab for First Years', 'Society of Women Engineers', 'Engineering B203', 'Bring a draft and leave with a reviewed one. Upper-year mentors and two co-op recruiters read résumés line by line; laptops available.', NULL, 1, NULL, 1786396491313);
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('swe', 'All disciplines');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('swe', 'Workshop');
-INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('swe', 'First years welcome');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('swe', 'Career fair prep');
 INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, temporary, from_submission, created_at)
   VALUES ('aiaa', '2026-08-25', 14, '2:00 – 4:00 pm', 'Design-Build-Fly Weekly Build', 'AIAA · Ram Aero', 'Magellan Room', 'Ram Aero''s open build session for the AIAA Design-Build-Fly competition aircraft. First years welcome with no experience — you will be handed a task.', 'aiaa', 1, NULL, 1786396491313);
@@ -101,7 +97,6 @@ INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('aiaa', 'Mechanical');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('aiaa', 'Club');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('aiaa', 'Design-Build-Fly');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('aiaa', 'Hands-on build');
-INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('aiaa', 'First years welcome');
 INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, temporary, from_submission, created_at)
   VALUES ('peru', '2026-08-26', 12, '12:00 – 1:00 pm', 'Grand Challenges in Peru: Info Session', 'International Programs', 'Scott 108', 'A winter-break community service project in Lima and Lobitos investigating sustainable engineering on the coast. Fall application deadline September 15.', 'peru', 1, NULL, 1786396491313);
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('peru', 'Civil');
@@ -132,12 +127,10 @@ INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, 
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie', 'All disciplines');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie', 'Social');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie', 'Free food');
-INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie', 'First years welcome');
 INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, temporary, from_submission, created_at)
   VALUES ('ewb', '2026-08-28', 15, '3:00 – 4:00 pm', 'Engineers Without Borders: General Meeting', 'EWB–CSU', 'Scott 214', 'Project updates from the Rwanda water team, then a vote on next year''s travel cohort. Open to anyone considering joining.', NULL, 1, NULL, 1786396491313);
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('ewb', 'Civil');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('ewb', 'Club');
-INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('ewb', 'First years welcome');
 INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, temporary, from_submission, created_at)
   VALUES ('racing', '2026-08-29', 10, '10:00 am – 2:00 pm', 'Ram Racing Open Garage', 'Formula SAE', 'Powerhouse Bay 3', 'The car is on the stands before competition. Come look at it, ask what everything does, and sign up for a shift.', NULL, 1, NULL, 1786396491313);
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('racing', 'Mechanical');
@@ -148,13 +141,11 @@ INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, 
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('studyhall', 'All disciplines');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('studyhall', 'Social');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('studyhall', 'Free food');
-INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('studyhall', 'First years welcome');
 INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, temporary, from_submission, created_at)
   VALUES ('major', '2026-08-31', 17, '5:00 – 7:00 pm', 'Major Declaration Ceremony', 'Engineering Common First Year', 'LSC Theatre', 'Celebrate everything you built, coded, sailed and survived during your first year. Free food and drinks, lawn games, and custom pins for your declared major.', 'major', 1, NULL, 1786396491313);
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('major', 'All disciplines');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('major', 'Social');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('major', 'Free food');
-INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('major', 'First years welcome');
 INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, temporary, from_submission, created_at)
   VALUES ('canoe', '2026-09-02', 12, '12:00 – 1:00 pm', 'Concrete Canoe Send-Off', 'ASCE Student Chapter', 'Engineering Quad', 'The canoe floats — come see it before it goes to regionals, and sign up to help with the trailer load.', NULL, 1, NULL, 1786396491313);
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('canoe', 'Civil');
@@ -166,7 +157,6 @@ INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, 
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-04', 'All disciplines');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-04', 'Social');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-04', 'Free food');
-INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-04', 'First years welcome');
 INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, temporary, from_submission, created_at)
   VALUES ('aero-08', '2026-09-08', 14, '2:00 – 4:00 pm', 'Design-Build-Fly Weekly Build', 'AIAA · Ram Aero', 'Magellan Room', 'Ram Aero''s open build session for the AIAA Design-Build-Fly competition aircraft. First years welcome with no experience — you will be handed a task.', 'aiaa', 1, NULL, 1786396491313);
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('aero-08', 'Mechanical');
@@ -177,13 +167,11 @@ INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, 
   VALUES ('showcase', '2026-09-10', 13, '1:00 – 4:00 pm', 'Summer Research Showcase', 'Undergraduate Research Office', 'Engineering Atrium', 'Posters from students who spent last summer in a lab, plus the faculty who took them on. Ask how they got the position.', NULL, 1, NULL, 1786396491313);
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('showcase', 'All disciplines');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('showcase', 'Social');
-INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('showcase', 'First years welcome');
 INSERT INTO events (id, date, start, time, title, org, place, blurb, flyer_key, temporary, from_submission, created_at)
   VALUES ('cookie-11', '2026-09-11', 11, '11:00 am – 2:00 pm', 'Last Cookie Friday of the Year', 'Engineering Community', 'AV Kitchen', 'Same cookies, more of them. Bring anyone you met this year.', 'cookie', 1, NULL, 1786396491313);
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-11', 'All disciplines');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-11', 'Social');
 INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-11', 'Free food');
-INSERT OR IGNORE INTO event_tags (event_id, tag) VALUES ('cookie-11', 'First years welcome');
 
 -- Sample submissions, so the review queue has something in it.
 INSERT INTO submissions (id, status, title, org, place, date, start, time, blurb, repeat_rule, repeat_until, by_name, by_email, flyer_key, awaiting, submitted_at)
