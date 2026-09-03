@@ -138,6 +138,42 @@
 
   var overlays = one("#overlays");
 
+  /* The embed — public/embed.html, the showcase on its own, sized for an
+     iframe on somebody else's page. It is this file running against a page
+     that is missing most of its DOM: no grid, no toolbar, no filters, no
+     overlays. Every painter below has to tolerate the node it paints into
+     simply not being there, which is guarded at each one rather than branched
+     on here, so the two pages stay one code path rather than two.
+
+     Read off an attribute on <body> rather than inferred from the absence of
+     a #calendar, so that a typo in index.html cannot quietly demote the real
+     page to the embed. */
+  var EMBED = document.body.hasAttribute("data-embed");
+
+  /* The calendar's own public address. Two surfaces need it and neither one is
+     reliably on it: the review screen, which runs on the Access hostname and
+     sends reviewers back here when they close it, and the embed, whose links
+     have to leave the frame for the real site rather than navigate inside it.
+
+     A link to one event, for both of those. The click is deliberately not
+     counted where it is made — it lands on #event/<id> at the other end, which
+     records the open itself, and counting both would double every one. */
+  var PUBLIC_CALENDAR = "https://calendar.fyetools.com/";
+
+  function publicLink(ev) {
+    return PUBLIC_CALENDAR + "#event/" + encodeURIComponent(ev.id);
+  }
+
+  /* How far ahead the embed looks. A frame has no toolbar to change the view
+     with, and a week is the right horizon for most of the year and the wrong
+     one over a break — so the page hosting the frame says which it wants, in
+     the src it already has to write: embed.html?view=month.
+
+     The query string is read here and nowhere else. Anything but "month" is
+     the week, including a misspelling, because a frame quietly showing
+     nothing would be worse than one showing the wrong seven days. */
+  if (EMBED && /[?&]view=month(&|$)/.test(location.search)) state.view = "month";
+
   /* Whatever had focus before an overlay opened, so closing it puts the caret
      back where the user left it rather than at the top of the document. */
   var focusBeforeOverlay = null;
@@ -518,6 +554,16 @@
     state.slideshow = false;
     pendingEventId = null;
 
+    /* The embed is one surface and has nothing to route to. A fragment on its
+       URL — pasted from the main page, or simply invented — must not be able
+       to open the submit form or the review queue inside somebody else's
+       page, and #event/<id> has nowhere to open either. */
+    if (EMBED) {
+      applyingRoute = false;
+      render();
+      return;
+    }
+
     if (event) {
       var id = decodeURIComponent(event[1]);
       /* Held only while the calendar has not loaded. Once it has, an id that
@@ -758,7 +804,25 @@
          st.loaded, !!st.error].join("~");
     if (node.dataset.event === key) return;
     node.dataset.event = key;
-    fill(node, cur ? flyerNode(cur, "stage") : emptyStageNode());
+    fill(node, cur ? stageNode(cur) : emptyStageNode());
+  }
+
+  /* What actually goes on the stage. On the page it is the artwork. On the
+     embed it is the artwork inside a link out to the event on the real
+     calendar: the flyer is the largest and most obvious thing in the frame,
+     and clicking it should do what clicking its row in the running order
+     does. `_blank` because the frame is a corner of somebody else's page and
+     replacing that page is not ours to do. */
+  function stageNode(ev) {
+    var art = flyerNode(ev, "stage");
+    if (!EMBED) return art;
+    return el("a", {
+      class: "stage-link",
+      href: publicLink(ev),
+      target: "_blank",
+      rel: "noopener",
+      title: "Open " + ev.title + " on the calendar"
+    }, art);
   }
 
   /* Two reels share this markup: the page's numbered running order, and the
@@ -777,16 +841,23 @@
         el("span", { class: "reel__when", text: when })
       ];
 
-      return el("button", {
-        type: "button",
-        class: "reel__item" +
-          (isPast(ev.date) ? " is-past" : "") +
-          (isToday(ev.date) ? " is-today" : ""),
-        onClick: function () { go(i); }
-      }, compact ? lines : [
+      var cls = "reel__item" +
+        (isPast(ev.date) ? " is-past" : "") +
+        (isToday(ev.date) ? " is-today" : "");
+
+      /* A row means two different things on the two pages. On the calendar it
+         is a way to drive the stage, so it is a button. On the embed there is
+         nothing under it to go on to and the stage is a display rather than
+         something the reader is steering, so it is a link out to the event. */
+      var row = EMBED
+        ? el("a", { class: cls, href: publicLink(ev), target: "_blank", rel: "noopener" })
+        : el("button", { type: "button", class: cls, onClick: function () { go(i); } });
+
+      append(row, compact ? lines : [
         el("span", { class: "reel__n", text: String(i + 1).padStart(2, "0") }),
         el("span", { class: "reel__text" }, lines)
       ]);
+      return row;
     }));
   }
 
@@ -864,6 +935,7 @@
 
   function renderFilters() {
     var host = one("#filters");
+    if (!host) return;
 
     if (!filtersBuilt) {
       fill(host, C.GROUPS.map(function (g) {
@@ -908,24 +980,36 @@
      Toolbar
      ====================================================================== */
 
+  /* The toolbar is one of the things the embed does not have. Each piece is
+     reached for and skipped when it is absent, rather than the whole painter
+     being skipped on EMBED: [data-range] does exist on the embed and on the
+     slideshow, and a surface that gains a count or a view toggle later should
+     get it painted without anybody remembering to come back here. */
   function renderToolbar() {
     var vis = visible();
     var label = rangeLabel();
     all("[data-range]").forEach(function (node) { node.textContent = label; });
 
-    one("#visible-count").textContent =
-      (vis.length === 1 ? "1 event" : vis.length + " events") +
-      (anyNarrowing() ? " matching" : " showing");
+    var count = one("#visible-count");
+    if (count) {
+      count.textContent =
+        (vis.length === 1 ? "1 event" : vis.length + " events") +
+        (anyNarrowing() ? " matching" : " showing");
+    }
 
-    one('[data-action="view-week"]').classList.toggle("is-on", state.view === "week");
-    one('[data-action="view-month"]').classList.toggle("is-on", state.view === "month");
+    var week = one('[data-action="view-week"]');
+    var month = one('[data-action="view-month"]');
+    if (week) week.classList.toggle("is-on", state.view === "week");
+    if (month) month.classList.toggle("is-on", state.view === "month");
 
     /* Nothing in view is nothing to export. */
     var download = one('[data-action="download-view"]');
-    download.disabled = vis.length === 0;
-    download.title = vis.length === 1
-      ? "Download this event as a calendar file"
-      : "Download these " + vis.length + " events as a calendar file";
+    if (download) {
+      download.disabled = vis.length === 0;
+      download.title = vis.length === 1
+        ? "Download this event as a calendar file"
+        : "Download these " + vis.length + " events as a calendar file";
+    }
 
     /* Only offered once the visitor has actually changed something — for
        everyone else it is a button that undoes nothing. */
@@ -940,6 +1024,10 @@
      concluding the calendar is broken. */
   function paintLoadState() {
     var node = one("#loadstate");
+    /* No line for it on the embed. Nothing is lost: the stage carries its own
+       "Loading…" and "The calendar has not loaded", which is the whole of what
+       that page can say about a fetch that has not landed. */
+    if (!node) return;
     var st = S.state();
 
     if (st.error && !st.loaded) {
@@ -996,6 +1084,7 @@
      placeholder is replaced with something real. */
   function paintSampleNote() {
     var note = one("#sample-note");
+    if (!note) return;
     var all = S.events();
     var fake = all.filter(function (ev) { return ev.temporary; }).length;
 
@@ -1012,6 +1101,7 @@
      an empty row never opens a gap in the rule above the calendar. */
   function syncSubRow() {
     var row = one("#toolbar-sub");
+    if (!row) return;
     row.hidden = Array.prototype.every.call(row.children, function (node) {
       return node.hidden;
     });
@@ -1138,6 +1228,9 @@
   S.onChange(function () { revision++; });
 
   function renderCalendar() {
+    var host = one("#calendar");
+    if (!host) return;
+
     /* The grid only depends on the view, the anchor, the filters and the
        search — not on which flyer is on the stage — so it is rebuilt only
        when one of those changes. `revision` covers events published out of
@@ -1146,7 +1239,7 @@
                      JSON.stringify(state.selected), revision].join("~");
     if (signature === gridSignature) return;
     gridSignature = signature;
-    fill(one("#calendar"), state.view === "month" ? monthGrid() : weekGrid());
+    fill(host, state.view === "month" ? monthGrid() : weekGrid());
   }
 
   /* ======================================================================
@@ -3530,7 +3623,6 @@
      place, so `wrangler pages dev` never throws anyone at production. Escape
      still calls closeReview directly — dismissing a screen should not navigate. */
   var REVIEW_HOST = "fye-calendar.pages.dev";
-  var PUBLIC_CALENDAR = "https://calendar.fyetools.com/";
 
   function leaveReview() {
     if (location.hostname === REVIEW_HOST) {
@@ -3829,22 +3921,37 @@
   }
 
   function start() {
-    one('[data-action="open-submit"]').addEventListener("click", openSubmit);
-    one('[data-action="start-slideshow"]').addEventListener("click", startSlideshow);
-    one('[data-action="prev"]').addEventListener("click", function () { shift(-1); });
-    one('[data-action="next"]').addEventListener("click", function () { shift(1); });
-    one('[data-action="today"]').addEventListener("click", goToday);
-    one('[data-action="view-week"]').addEventListener("click", function () { setView("week"); });
-    one('[data-action="view-month"]').addEventListener("click", function () { setView("month"); });
-    one('[data-action="download-view"]').addEventListener("click", downloadView);
+    /* None of these controls exist on the embed. `on` binds where the node is
+       there and does nothing where it is not, so one wiring block serves both
+       pages — and a missing button in index.html fails as a dead control
+       rather than as a TypeError that stops the rest of this function and
+       leaves the whole page unwired. */
+    function on(selector, handler) {
+      var node = one(selector);
+      if (node) node.addEventListener("click", handler);
+    }
+
+    on('[data-action="open-submit"]', openSubmit);
+    on('[data-action="start-slideshow"]', startSlideshow);
+    on('[data-action="prev"]', function () { shift(-1); });
+    on('[data-action="next"]', function () { shift(1); });
+    on('[data-action="today"]', goToday);
+    on('[data-action="view-week"]', function () { setView("week"); });
+    on('[data-action="view-month"]', function () { setView("month"); });
+    on('[data-action="download-view"]', downloadView);
 
     var search = one("#search");
-    search.value = state.query;
-    search.addEventListener("input", function (e) { setQuery(e.target.value); });
-    /* type="search" clears on Escape without firing input in some browsers. */
-    search.addEventListener("search", function (e) { setQuery(e.target.value); });
+    if (search) {
+      search.value = state.query;
+      search.addEventListener("input", function (e) { setQuery(e.target.value); });
+      /* type="search" clears on Escape without firing input in some browsers. */
+      search.addEventListener("search", function (e) { setQuery(e.target.value); });
+    }
 
-    window.addEventListener("keydown", onKeyDown);
+    /* The arrow keys, "/" and Escape belong to the host page when the calendar
+       is a frame in the corner of it. An embed that swallowed them would be a
+       widget quietly taking over somebody else's keyboard. */
+    if (!EMBED) window.addEventListener("keydown", onKeyDown);
     window.addEventListener("popstate", applyRoute);
 
     /* Escape inside fullscreen belongs to the browser: it drops the page back
@@ -3886,7 +3993,11 @@
        the gap between the two is how much the ad blockers are taking. */
     applyRoute();
     M.track("page", {
-      surface: state.slideshow ? "slideshow"
+      /* First, and unconditional: the embed has no other surface to be, and
+         separating its loads from the calendar's is the only way to see
+         whether anyone has actually put the frame on a page. */
+      surface: EMBED ? "embed"
+        : state.slideshow ? "slideshow"
         : state.reviewOpen ? "review"
         : state.submitOpen ? "submit"
         /* An event link counts as arriving on an event even though the dialog

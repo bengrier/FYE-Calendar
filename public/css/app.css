@@ -1726,3 +1726,90 @@ textarea.input { font-size: 17px; line-height: 1.5; resize: vertical; }
   .month__cell { min-height: 92px; padding: 6px 4px 10px 2px; }
   .modal { padding: 14px; }
 }
+
+/* --- the embed -----------------------------------------------------------
+   public/embed.html: the showcase alone, in an iframe on somebody else's page.
+   The frame is the whole viewport here, so the page is laid out to fill it
+   exactly rather than to be scrolled. A scrollbar inside a frame is a thing
+   nobody goes looking for, and whatever is below the fold of one is content
+   that will not be read.
+   ------------------------------------------------------------------------- */
+
+.embed,
+.embed .app { min-height: 0; }
+
+.page--embed {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-sizing: border-box;
+  height: 100vh;
+  padding: 22px 24px 14px;
+  overflow: hidden;
+}
+
+.showcase--embed {
+  margin-top: 0;
+  height: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+/* The flyer on the embed's stage is wrapped in a link out to the event. The
+   wrapper has to size like the artwork it holds rather than like a block that
+   happens to contain it, or the image loses the height it is measured against
+   and the stage grows past the frame. */
+.stage-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Both dimensions, explicitly: the flyer is sized with max-height: 100%,
+     and a percentage measured against an auto height resolves to no limit at
+     all — which is a flyer rendered at its natural size and cropped by the
+     stage's overflow rather than one fitted inside it. */
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.embed__foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex: none;
+  border-top: 1px solid var(--ink-12);
+  padding-top: 12px;
+}
+
+.embed__range {
+  font-family: var(--font-brand);
+  font-size: 13px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-55);
+}
+
+@media (max-width: 1100px) {
+  /* The stacked showcase the main page falls back to is the wrong shape for a
+     frame: it is taller than what it is given and expects the page to scroll.
+     So the embed keeps a stage that fills what is left of the frame — and the
+     running order goes rather than the flyer, because the flyer is what the
+     embed is for and a list stacked under it would take the whole frame. */
+  .showcase--embed {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto auto;
+    height: auto;
+  }
+  .showcase--embed .reel { display: none; }
+}
+
+@media (max-width: 720px) {
+  .page--embed { padding: 16px 16px 12px; }
+  /* Three things laid across a phone-width frame is three columns two words
+     wide. They stack instead, and the sample note — the one line down there
+     that has to be read rather than glanced at — takes the first of them. */
+  .embed__foot { flex-wrap: wrap; row-gap: 8px; }
+  .embed__foot .samplenote { order: -1; flex: 1 0 100%; margin-right: 0; }
+}

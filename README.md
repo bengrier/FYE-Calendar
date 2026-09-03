@@ -45,7 +45,7 @@ is gitignored and wrangler never uploads it — production variables come from t
 Cloudflare dashboard — so it cannot reach a deployment. Without it the admin API
 refuses everything, which is what it should do.
 
-## The five surfaces
+## The six surfaces
 
 | Surface | How you get there |
 | --- | --- |
@@ -54,6 +54,7 @@ refuses everything, which is what it should do.
 | Submit an event — straight into the queue | **Submit an Event** in the header, or `#submit` |
 | Slideshow for lobby screens and lecture halls | **Slide Show**; arrows/space step, Esc exits |
 | Review queue (office only, behind a login) — three tabs: what is waiting, what is already on the calendar, and the custom tags | **Review queue** in the page footer |
+| Embed — the showcase alone, for an iframe on another site | `/embed`. See [Embedding](#embedding) |
 
 The showcase above the grid cycles through whatever is currently in view, in the
 order it happens; clicking a row in the running order jumps to it. It holds still
@@ -68,6 +69,10 @@ while a dialog is open and while the tab is in the background.
 | `Esc` | close whatever is open, or clear the search |
 
 ### URLs
+
+The embed is the one surface with no fragment: it is its own page, because a
+frame on somebody else's site should not depend on their URL. See
+[Embedding](#embedding).
 
 `#event/<id>` opens an event and moves the calendar to its week, which makes
 every event linkable — **Copy link** in the detail dialog puts that URL on the
@@ -85,7 +90,10 @@ split is the point of the directory: with the repo root as the output,
 
 - `public/index.html` — page shell and static chrome. Dynamic regions are marked
   with `data-stage`, `data-cur`, `data-countdown`, `data-reel` and `data-range`;
-  both the page and the slideshow overlay expose them, so one painter feeds both.
+  the page, the slideshow overlay and the embed all expose them, so one painter
+  feeds all three.
+- `public/embed.html` — the embed: the same `data-*` regions and nothing else,
+  running the same `app.js`. See [Embedding](#embedding).
 - `public/js/store.js` — the live calendar. Reads stay **synchronous**, answering
   from an in-memory cache; `hydrate()` fills that cache from the API and fires
   the listeners, and only the mutations are asynchronous. That is what kept this
@@ -323,6 +331,68 @@ the `approved` flag — so turning it back on puts it back everywhere it was.
 The filter bar's own chips (Mechanical, Workshop, and the rest) are not listed.
 They are the vocabulary in `js/data.js` that the `tags` table only mirrors, and
 turning one off would quietly empty a filter the calendar ships with.
+
+## Embedding
+
+`/embed` is the showcase on its own — the flyer, the event under it, the
+countdown and the running order — sized to fill an iframe. Paste this into a
+page anywhere:
+
+```html
+<iframe src="https://calendar.fyetools.com/embed"
+        title="Upcoming first-year engineering events"
+        width="100%" height="620" style="border:0" loading="lazy"></iframe>
+```
+
+Add `?view=month` to the `src` for a month of runway instead of a week. That is
+the only thing the embed reads off its own URL; anything else is ignored, and
+anything but `month` is the week.
+
+Two things to get right before pasting it.
+
+**The height is yours to pick.** An iframe does not grow to fit what is inside
+it, so the frame's height is whatever the host page says and the embed lays
+itself out to fill exactly that — it never scrolls. 620px is a good starting
+point. Below 1100px wide the running order is dropped and the flyer takes the
+frame, because a list stacked under the stage in a narrow column takes the whole
+of it and the flyer is what the embed is for.
+
+**Use `calendar.fyetools.com`, not `fye-calendar.pages.dev`.** Both serve the
+embed, but the pages.dev hostname is the reviewers' address and is the one
+behind Cloudflare Access. CSU has also filtered the custom domain twice — ten
+days in August 2026, and again on 1 September — so if the frame is blank on
+campus and fine off it, that is what to check first, and it is a conversation
+with CSU networking rather than a change here.
+
+### What it deliberately does not have
+
+No header, no filters, no search, no grid, no toolbar, and none of the overlays:
+no submit form, no review queue, and no event dialog. A fragment on its URL is
+ignored, so `#review` on the end of an embed src cannot open the queue inside
+somebody else's page. It does not take the arrow keys, `/` or `Esc` either — a
+frame in the corner of a page has no business owning that page's keyboard.
+
+Clicking the flyer, or a row in the running order, opens that event on
+`calendar.fyetools.com` in a new tab. The click is counted there rather than
+here, by the `#event/<id>` link it lands on, so that one click is not two.
+
+The sample-content warning travels with it. While the calendar still holds
+placeholder events, a frame showing them on a page that is not ours with nothing
+saying so is an invitation to plan around an invented date; the line hides itself
+once the last placeholder is gone.
+
+### How it stays working
+
+`public/embed.html` is markup only — it runs the same `js/app.js`, which reads
+`data-embed` on `<body>` into `EMBED` and otherwise behaves as it does on the
+main page. The painters reach for the toolbar, the count, the grid and the
+filters and skip each one that is not there, rather than branching on `EMBED`,
+so the two pages stay one code path.
+
+The consequence worth knowing: **a new control added to `index.html` has to be
+wired with a node that may be absent in mind.** `start()` binds through a helper
+that no-ops on a missing node, and a painter that reaches for a node without
+checking will throw on the embed and take the whole render with it.
 
 ## Where it is deployed
 
@@ -610,10 +680,12 @@ Two systems, because neither one is enough on its own.
 **Cloudflare Web Analytics** — page views, referrers, countries, browsers, Core
 Web Vitals. One `<script>` at the bottom of `public/index.html`, read in the
 Cloudflare dashboard under Web Analytics. Cookieless, and nothing it stores
-identifies a person.
+identifies a person. Not on `public/embed.html`: a third-party script inside a
+third party's frame, counting the one thing `/api/metric` already counts there.
 
 **The calendar's own metrics** — which events get opened, what gets added to a
-calendar, which filters get used, whether the slideshow ever runs. Written by
+calendar, which filters get used, whether the slideshow ever runs, whether
+anyone has actually put the embed on a page. Written by
 the Functions to Workers Analytics Engine and read back with SQL. The schema is
 documented at the top of `functions/_lib/metrics.js`, which is the only place
 that decides what may be recorded.
@@ -651,7 +723,7 @@ D1, where a reviewer needs them.
 
 | Metric | Written by | Means |
 | --- | --- | --- |
-| `page` | the page | the calendar loaded. `surface` says which overlay it opened on |
+| `page` | the page | the calendar loaded. `surface` says which overlay it opened on, and is `embed` for a load inside somebody's iframe |
 | `event_open` | the page | an event was opened. `surface` is `grid`, `step` or `link` |
 | `ics_one` | the page | one event added to somebody's calendar |
 | `ics_view` | the page | everything in view downloaded; `value` is how many |

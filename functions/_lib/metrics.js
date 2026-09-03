@@ -36,7 +36,7 @@
                         the organisation for an event, the filter key for a
                         filter. "" when there is none
      blob4    surface   where in the page it happened: calendar, detail,
-                        showcase, slideshow, submit, server
+                        showcase, slideshow, embed, submit, server
      blob5    host      the hostname asked. Splits calendar.fyetools.com from
                         fye-calendar.pages.dev, which matters because the second
                         is the reviewers' address and its traffic is the office,

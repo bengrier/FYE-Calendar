@@ -964,6 +964,86 @@ and one approved test event which does not. Both are in
 Small changes made against the live site. Each one is deployed and confirmed
 working; the passes above are left as the record of the day they describe.
 
+### 2026-09-03 — the calendar can be put on somebody else's page
+
+**`/embed` is the showcase on its own, sized to fill an iframe.** The office
+wanted the flyer rotation on other CSU pages without sending people away from
+those pages to get it. `public/embed.html` is markup only: the same `data-stage`,
+`data-cur`, `data-countdown`, `data-reel` and `data-range` regions the page and
+the slideshow already expose, and nothing else. It loads the same `js/app.js`.
+
+The whole of the JavaScript change is that **the painters now tolerate the nodes
+they paint into not existing.** `renderToolbar` reached straight into
+`#visible-count`, the view toggle and the download button; `renderCalendar` into
+`#calendar`; `renderFilters` into `#filters`; `start()` bound eight click
+handlers to nodes it assumed were there. On a page that is only the showcase
+every one of those throws, and the first throw takes the rest of the render with
+it. They are guarded individually rather than wrapped in `if (EMBED)`, so the
+two pages remain one code path — and a control added to `index.html` later gets
+painted on any surface that grows a node for it, without anybody remembering
+this file exists.
+
+`EMBED` is read from `data-embed` on `<body>` rather than inferred from a
+missing `#calendar`, so a typo in `index.html` cannot quietly demote the real
+page to the embed. Three things turn on it:
+
+- **Links out.** The stage flyer and the running-order rows become anchors to
+  `calendar.fyetools.com/#event/<id>`, `target="_blank"`, instead of buttons
+  that drive the stage. Nothing counts the click here: it is counted at the
+  other end by the `#event/<id>` link it lands on, and counting both would
+  double every one.
+- **No routing.** `applyRoute` returns early, so a fragment on the frame's src —
+  `#review` most of all — cannot open the queue or the submit form inside
+  somebody else's page.
+- **No keyboard.** The arrow keys, `/` and `Esc` stay with the host page. A
+  widget in the corner of a page has no business owning that page's keyboard.
+
+`?view=month` on the src is the one thing the embed reads off its own URL, since
+a frame has no toolbar to change the view with and a week is the wrong horizon
+over a break. Anything but `month` is the week: a frame quietly showing nothing
+would be worse than one showing the wrong seven days.
+
+**The sample-content warning is on the embed on purpose.** Placeholder events
+shown on a page that is not ours, with nothing saying they are placeholders, is
+an invitation to plan around an invented date at one more remove from anyone who
+could correct it. It is the same `#sample-note` the toolbar has and it hides
+itself the same way.
+
+The Cloudflare Web Analytics beacon is **not** on the embed — a third-party
+script inside a third party's frame, counting the one thing `/api/metric`
+already counts there, as `page` with `surface: "embed"`. That surface is the
+only way to see whether the frame was ever actually pasted anywhere.
+
+Layout is `height: 100vh` and no scrolling: the frame's height is whatever the
+host page wrote and an iframe does not grow to fit. Under 1100px the running
+order is dropped rather than stacked under the stage, where it would take the
+whole frame — the flyer is what the embed is for.
+
+#### Two things that will come back
+
+**The hostname.** The snippet in README points at `calendar.fyetools.com`, which
+CSU has now filtered twice — ten days in August, and again on 1 September. A
+frame that is blank on campus and fine off it is that, not this code, and the
+pages.dev hostname is not the answer: it is the reviewers' address and it is
+behind Access.
+
+**The footer link to the review queue stays on `fye-calendar.pages.dev`.** It
+looks like the one link that was missed when everything moved to the custom
+domain. It is not: Access needs a zone on the Cloudflare account, this domain's
+DNS is at Hover, and a reviewer sent to `/review` on the custom domain reaches a
+queue with no way to sign in.
+
+#### Checked in a browser, against a local D1
+
+The embed in a real iframe on another page: flyer fitted rather than cropped,
+running order and range label painted, countdown ticking, no scrollbar inside
+the frame, sample note showing. `?view=month` widening one event to four. Rows
+and flyer resolving to `calendar.fyetools.com/#event/<id>`. Narrow frame
+dropping the running order. And the main page unchanged through the same
+build — grid, cards, event dialog, `#event/<id>` in the address bar, search
+narrowing the count, filters clearing — since every guard added here is on a
+path it also runs.
+
 ### 2026-09-01 — shared event links did not work
 
 **Every `#event/<id>` link sent to somebody else opened the plain calendar.**
